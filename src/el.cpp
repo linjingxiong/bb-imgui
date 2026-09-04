@@ -23,26 +23,62 @@ ImVec4 mix(ImVec4 a, ImVec4 b, float t) {
                   a.w + (b.w - a.w) * t);
 }
 
+// All our icon macros (icons.h) are single codepoints in 0xE000..0xF8FF,
+// always a 3-byte UTF-8 sequence. Decoding it ourselves avoids pulling in
+// imgui_internal.h just for ImTextCharFromUtf8.
+ImWchar icon_codepoint(const char* utf8) {
+    const unsigned char* s = (const unsigned char*)utf8;
+    if ((s[0] & 0xF0) != 0xE0) return (ImWchar)s[0]; // not a 3-byte sequence; shouldn't happen here
+    return (ImWchar)(((s[0] & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F));
+}
+
+// CalcTextSize() measures font-metric advance/line-height, not a glyph's
+// actual ink extents — fine for text, but icon-font glyphs (Material
+// Symbols) have wildly inconsistent left/right/top/bottom bearing relative
+// to their advance box, so centering by CalcTextSize visibly off-centers
+// icons (confirmed: search/trash icons in the circle-button row were
+// noticeably off-centre and inconsistently sized). Use the glyph's real
+// quad bounds (X0,Y0,X1,Y1 — offsets from the pen position, already scaled
+// to `size_px` since ImFontBaked is per-size) instead.
+void draw_icon_centered(ImDrawList* dl, ImFont* font, float size_px, ImVec2 center, ImU32 col,
+                        const char* glyph_utf8) {
+    ImFontBaked* baked = font->GetFontBaked(size_px);
+    ImFontGlyph* g = baked ? baked->FindGlyph(icon_codepoint(glyph_utf8)) : nullptr;
+    if (!g) { // fallback: old behaviour, better than nothing
+        ImVec2 ts = ImGui::CalcTextSize(glyph_utf8);
+        dl->AddText(font, size_px, ImVec2(center.x - ts.x * 0.5f, center.y - ts.y * 0.5f), col,
+                   glyph_utf8);
+        return;
+    }
+    ImVec2 pen(center.x - (g->X0 + g->X1) * 0.5f, center.y - (g->Y0 + g->Y1) * 0.5f);
+    dl->AddText(font, size_px, pen, col, glyph_utf8);
+}
+
 struct TypeColors {
-    ImVec4 base, hover, active, plain_bg, plain_text;
+    ImVec4 base, hover, active, plain_bg, plain_text, border;
 };
 
 const TypeColors& colors_for(ButtonType t) {
     static const TypeColors table[] = {
+        // Default's border can't just reuse `base` (white) — that's the same
+        // colour as the page/card background, so the button has no visible
+        // outline at all (only noticeable on circle/icon buttons, which have
+        // no label text to give the eye a footprint). Element's actual
+        // default-button border is $--border-color-base #DCDFE6.
         /*Default*/ {rgb(0xff, 0xff, 0xff), rgb(0xec, 0xf5, 0xff), rgb(0xd9, 0xec, 0xff),
-                    rgb(0xff, 0xff, 0xff), rgb(0x40, 0x9e, 0xff)},
+                    rgb(0xff, 0xff, 0xff), rgb(0x40, 0x9e, 0xff), rgb(0xdc, 0xdf, 0xe6)},
         /*Primary*/ {rgb(0x40, 0x9e, 0xff), rgb(0x66, 0xb1, 0xff), rgb(0x3a, 0x8e, 0xe6),
-                    rgb(0xec, 0xf5, 0xff), rgb(0x40, 0x9e, 0xff)},
+                    rgb(0xec, 0xf5, 0xff), rgb(0x40, 0x9e, 0xff), rgb(0x40, 0x9e, 0xff)},
         /*Success*/ {rgb(0x67, 0xc2, 0x3a), rgb(0x85, 0xce, 0x61), rgb(0x5d, 0xaf, 0x34),
-                    rgb(0xf0, 0xf9, 0xeb), rgb(0x67, 0xc2, 0x3a)},
+                    rgb(0xf0, 0xf9, 0xeb), rgb(0x67, 0xc2, 0x3a), rgb(0x67, 0xc2, 0x3a)},
         /*Warning*/ {rgb(0xe6, 0xa2, 0x3c), rgb(0xeb, 0xb5, 0x63), rgb(0xcf, 0x92, 0x36),
-                    rgb(0xfd, 0xf6, 0xec), rgb(0xe6, 0xa2, 0x3c)},
+                    rgb(0xfd, 0xf6, 0xec), rgb(0xe6, 0xa2, 0x3c), rgb(0xe6, 0xa2, 0x3c)},
         /*Danger */ {rgb(0xf5, 0x6c, 0x6c), rgb(0xf7, 0x89, 0x89), rgb(0xdd, 0x61, 0x61),
-                    rgb(0xfe, 0xf0, 0xf0), rgb(0xf5, 0x6c, 0x6c)},
+                    rgb(0xfe, 0xf0, 0xf0), rgb(0xf5, 0x6c, 0x6c), rgb(0xf5, 0x6c, 0x6c)},
         /*Info   */ {rgb(0x90, 0x93, 0x99), rgb(0xa6, 0xa9, 0xad), rgb(0x82, 0x84, 0x8a),
-                    rgb(0xf4, 0xf4, 0xf5), rgb(0x90, 0x93, 0x99)},
+                    rgb(0xf4, 0xf4, 0xf5), rgb(0x90, 0x93, 0x99), rgb(0x90, 0x93, 0x99)},
         /*Text   */ {ImVec4(0, 0, 0, 0), rgb(0xec, 0xf5, 0xff), rgb(0xd9, 0xec, 0xff),
-                    ImVec4(0, 0, 0, 0), rgb(0x40, 0x9e, 0xff)},
+                    ImVec4(0, 0, 0, 0), rgb(0x40, 0x9e, 0xff), ImVec4(0, 0, 0, 0)},
     };
     return table[(int)t];
 }
@@ -110,7 +146,10 @@ ButtonResult button_ex(const char* label, ButtonType type, const ButtonOpts& o,
     float rounding = o.circle ? h * 0.5f : (o.round ? h * 0.5f : sz.radius);
 
     ImVec4 fill = o.plain ? c.plain_bg : c.base;
-    ImVec4 border = o.plain ? c.base : c.base;
+    // For colour types, border == base (a solid fill needs no contrasting
+    // outline); for Default, `border` is the dedicated grey — see the table
+    // comment above for why this can't just be `base` for both.
+    ImVec4 border = c.border;
     ImVec4 text_col = o.plain ? c.plain_text
                      : (type == ButtonType::Default ? rgb(0x60, 0x62, 0x66) : rgb(0xff, 0xff, 0xff));
     if (type == ButtonType::Text) {
@@ -152,10 +191,11 @@ ButtonResult button_ex(const char* label, ButtonType type, const ButtonOpts& o,
         ImGui::PushFont(nullptr, font_px);
         float x = cx - text_w * 0.5f;
         if (o.icon) {
-            ImGui::PushFont(fonts::body(), icon_px);
             ImVec2 its = ImGui::CalcTextSize(o.icon);
-            dl->AddText(ImVec2(x, cy - its.y * 0.5f), u32(text_col), o.icon);
-            ImGui::PopFont();
+            // Centre on the icon's own advance-width slot (x .. x+its.x), not
+            // by CalcTextSize's font-metric box — see draw_icon_centered().
+            draw_icon_centered(dl, fonts::body(), icon_px, ImVec2(x + its.x * 0.5f, cy),
+                              u32(text_col), o.icon);
             x += its.x + (label[0] ? 6.0f : 0.0f);
         }
         if (label[0])
