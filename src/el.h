@@ -126,4 +126,27 @@ enum class MessageBoxResult { None, Confirm, Cancel };
 MessageBoxResult message_box(const char* id, const char* title, const char* text,
                              bool* open, bool show_cancel = true);
 
+// ---------------------------------------------------------------------------
+// Navigation (Batch 4)
+// ---------------------------------------------------------------------------
+
+// A row of tab labels with an accent underline on the active tab, sitting
+// on a full-width baseline rule (el-tabs). `current` is an in/out index.
+// Returns true the frame it changes.
+bool tabs(const char* id, int* current, const char* const* labels, int count);
+
+// "Home > Products > Detail" — separators are drawn automatically, the
+// last crumb is rendered as plain (non-clickable) text. Returns the
+// 0-based index of a clicked crumb this frame, or -1.
+int breadcrumb(const char* const* labels, int count);
+
+// A horizontal step indicator (el-steps). `current` is the 0-based active
+// step; steps before it are marked done (filled, checkmark). Purely
+// presentational — no return value.
+void steps(const char* const* labels, int count, int current);
+
+// A button that opens a dropdown menu of `items` below it when clicked.
+// Returns the 0-based index of the clicked item this frame, or -1.
+int dropdown(const char* id, const char* label, const char* const* items, int count);
+
 } // namespace el

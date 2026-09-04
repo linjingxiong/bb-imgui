@@ -38,6 +38,10 @@ struct State {
     bool   loading_active = false;
     bool   msgbox_open = false;
     bool   msgbox_alert_open = false;
+
+    int    tabs_current = 0;
+    int    steps_current = 1;
+    std::string dropdown_pick = "(none)";
 };
 State g;
 
@@ -257,6 +261,43 @@ const Entry ENTRIES[] = {
      []{ if (bb::button("Notify"))
              el::notify("New version available", "bb-imgui 0.2.0 is ready to install.",
                        el::NoticeType::Info); }},
+
+    // --- Navigation ------------------------------------------------------
+    {"Navigation", "Tabs", "const char* labels[] = {\"Detail\",\"Rules\",\"Reviews\"};\n"
+     "el::tabs(\"t\", &current, labels, 3);",
+     "A row of text tabs on a baseline rule; the active tab gets an accent "
+     "underline.",
+     []{ static const char* labels[] = {"Detail", "Rules", "Reviews"};
+         el::tabs("demo", &g.tabs_current, labels, 3);
+         ImGui::Dummy(ImVec2(0, 8));
+         ImGui::TextDisabled("content for \"%s\"", labels[g.tabs_current]); }},
+
+    {"Navigation", "Breadcrumb", "const char* crumbs[] = {\"Model\",\"Group\",\"Cube\"};\n"
+     "el::breadcrumb(crumbs, 3);",
+     "Clickable path segments with a chevron separator; the last segment is "
+     "plain text.",
+     []{ static const char* crumbs[] = {"Model", "Group", "Cube"};
+         el::breadcrumb(crumbs, 3); }},
+
+    {"Navigation", "Steps", "const char* labels[] = {\"Upload\",\"Configure\",\"Done\"};\n"
+     "el::steps(labels, 3, current);",
+     "A horizontal progress indicator; steps before `current` are marked "
+     "done with a checkmark.",
+     []{ static const char* labels[] = {"Upload", "Configure", "Done"};
+         el::steps(labels, 3, g.steps_current);
+         if (bb::button("Back") && g.steps_current > 0) g.steps_current--;
+         ImGui::SameLine();
+         if (bb::button("Next") && g.steps_current < 2) g.steps_current++; }},
+
+    {"Navigation", "Dropdown", "const char* items[] = {\"Edit\",\"Duplicate\",\"Delete\"};\n"
+     "int i = el::dropdown(\"d\", \"Actions\", items, 3);",
+     "A button that opens a menu of items below it; returns the clicked "
+     "index for one frame.",
+     []{ static const char* items[] = {"Edit", "Duplicate", "Delete"};
+         int i = el::dropdown("demo", "Actions", items, 3);
+         if (i >= 0) g.dropdown_pick = items[i];
+         ImGui::SameLine();
+         ImGui::TextDisabled("picked: %s", g.dropdown_pick.c_str()); }},
 };
 constexpr int COUNT = (int)(sizeof(ENTRIES) / sizeof(ENTRIES[0]));
 

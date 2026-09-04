@@ -741,4 +741,156 @@ MessageBoxResult message_box(const char* id, const char* title, const char* text
     return result;
 }
 
+// ===========================================================================
+// Navigation (Batch 4)
+// ===========================================================================
+bool tabs(const char* id, int* current, const char* const* labels, int count) {
+    const theme::Palette& p = theme::palette();
+    ImGui::PushID(id);
+    bool changed = false;
+    float h = 36.0f;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    dl->AddLine(ImVec2(pos.x, pos.y + h), ImVec2(pos.x + w, pos.y + h), u32(p.border));
+
+    float x = pos.x;
+    for (int i = 0; i < count; i++) {
+        ImGui::PushID(i);
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImVec2 ts = ImGui::CalcTextSize(labels[i]);
+        ImGui::PopFont();
+        float tw = ts.x + 32.0f;
+        ImGui::SetCursorScreenPos(ImVec2(x, pos.y));
+        ImGui::InvisibleButton("tab", ImVec2(tw, h));
+        bool hovered = ImGui::IsItemHovered();
+        bool on = (*current == i);
+        if (ImGui::IsItemClicked() && !on) { *current = i; changed = true; }
+
+        ImVec4 col = on ? p.accent : (hovered ? p.light : p.text);
+        dl->AddText(ImVec2(x + (tw - ts.x) * 0.5f, pos.y + (h - ts.y) * 0.5f), u32(col), labels[i]);
+        if (on)
+            dl->AddRectFilled(ImVec2(x + 8, pos.y + h - 2), ImVec2(x + tw - 8, pos.y + h),
+                              u32(p.accent));
+        x += tw;
+        ImGui::PopID();
+    }
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + h));
+    ImGui::Dummy(ImVec2(w, 0));
+    ImGui::PopID();
+    return changed;
+}
+
+int breadcrumb(const char* const* labels, int count) {
+    const theme::Palette& p = theme::palette();
+    int clicked = -1;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    for (int i = 0; i < count; i++) {
+        bool last = (i == count - 1);
+        ImGui::PushID(i);
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImVec2 ts = ImGui::CalcTextSize(labels[i]);
+        if (last) {
+            dl->AddText(pos, u32(p.text), labels[i]);
+            ImGui::Dummy(ts);
+        } else {
+            ImGui::InvisibleButton("crumb", ts);
+            bool hovered = ImGui::IsItemHovered();
+            if (ImGui::IsItemClicked()) clicked = i;
+            dl->AddText(pos, u32(hovered ? p.accent : p.subtle_text), labels[i]);
+        }
+        ImGui::PopID();
+        if (!last) {
+            ImGui::SameLine(0, 6);
+            ImGui::PushFont(fonts::body(), 13.0f);
+            ImGui::TextColored(p.subtle_text, "%s", ICON_CHEVRON_RIGHT);
+            ImGui::PopFont();
+            ImGui::SameLine(0, 6);
+        }
+    }
+    ImGui::PopFont();
+    return clicked;
+}
+
+void steps(const char* const* labels, int count, int current) {
+    const theme::Palette& p = theme::palette();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float w = ImGui::GetContentRegionAvail().x;
+    float seg = w / (float)count;
+    float r = 12.0f;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    float cy = pos.y + r;
+
+    for (int i = 0; i < count; i++) {
+        float cx = pos.x + seg * i + r + (i == 0 ? 0.0f : 0.0f);
+        ImVec2 c(cx, cy);
+        bool done = i < current, active = i == current;
+
+        if (i > 0) {
+            ImVec2 prev(pos.x + seg * (i - 1) + r, cy);
+            dl->AddLine(ImVec2(prev.x + r + 4, cy), ImVec2(c.x - r - 4, cy),
+                        u32(i <= current ? p.accent : p.border), 1.5f);
+        }
+
+        if (done) {
+            dl->AddCircleFilled(c, r, u32(p.accent));
+            ImGui::PushFont(fonts::body(), 13.0f);
+            ImVec2 its = ImGui::CalcTextSize(ICON_CHECK);
+            dl->AddText(ImVec2(c.x - its.x * 0.5f, c.y - its.y * 0.5f), u32(rgb(255, 255, 255)),
+                        ICON_CHECK);
+            ImGui::PopFont();
+        } else {
+            dl->AddCircleFilled(c, r, u32(active ? rgb(255, 255, 255) : p.deep));
+            dl->AddCircle(c, r, u32(active ? p.accent : p.border), 0, 1.5f);
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "%d", i + 1);
+            ImGui::PushFont(nullptr, theme::size::SMALL * 0.85f);
+            ImVec2 nts = ImGui::CalcTextSize(buf);
+            dl->AddText(ImVec2(c.x - nts.x * 0.5f, c.y - nts.y * 0.5f),
+                        u32(active ? p.accent : p.subtle_text), buf);
+            ImGui::PopFont();
+        }
+
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImVec2 lts = ImGui::CalcTextSize(labels[i]);
+        dl->AddText(ImVec2(c.x - lts.x * 0.5f, cy + r + 8),
+                    u32(active || done ? p.text : p.subtle_text), labels[i]);
+        ImGui::PopFont();
+    }
+    ImGui::Dummy(ImVec2(w, r * 2 + 28));
+}
+
+int dropdown(const char* id, const char* label, const char* const* items, int count) {
+    const theme::Palette& p = theme::palette();
+    ImGui::PushID(id);
+    int clicked = -1;
+
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "%s  %s", label, ICON_EXPAND_MORE);
+    if (button(buf)) ImGui::OpenPopup("menu");
+
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, p.ui);
+    ImGui::PushStyleColor(ImGuiCol_Border, p.border);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, mix(p.ui, p.accent, 0.08f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, mix(p.ui, p.accent, 0.14f));
+    ImGui::PushStyleColor(ImGuiCol_Text, p.text);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, theme::RADIUS);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
+    if (ImGui::BeginPopup("menu")) {
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        for (int i = 0; i < count; i++) {
+            if (ImGui::Selectable(items[i])) clicked = i;
+        }
+        ImGui::PopFont();
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(5);
+    ImGui::PopID();
+    return clicked;
+}
+
 } // namespace el
