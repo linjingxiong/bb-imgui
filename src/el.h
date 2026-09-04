@@ -14,20 +14,34 @@
 namespace el {
 
 enum class ButtonType { Default, Primary, Success, Warning, Danger, Info, Text };
+// Element's four button sizes. Height isn't a fixed number in Element — it
+// falls out of font-size + padding — so this drives padding/font-size/
+// radius per theme-chalk's var.scss, and the actual pixel height follows
+// from the measured text at that font size.
+enum class ButtonSize { Default, Medium, Small, Mini };
 
 struct ButtonOpts {
+    ButtonSize size = ButtonSize::Default;
     bool plain = false;
     bool round = false;
     bool circle = false;
     bool disabled = false;
     bool loading = false;
-    const char* icon = nullptr; // optional leading icon glyph
-    float height = 40.0f;       // Element's default size; 36/32/28 = medium/small/mini
+    bool autofocus = false;      // focus this button when its window first appears
+    const char* icon = nullptr;  // optional leading icon glyph
 };
 
 // Returns true the frame it's clicked (never true if disabled/loading).
 bool button(const char* label, ButtonType type = ButtonType::Default,
            const ButtonOpts& o = {});
+
+// `count` buttons drawn as one connected pill (el-button-group): flush
+// borders between neighbours, square inner corners, rounded only on the two
+// outer ends. `types`/`opts` are parallel arrays of length `count`, or null
+// to use the default for every button. Returns the 0-based index of the
+// button clicked this frame, or -1.
+int button_group(const char* const* labels, int count, const ButtonType* types = nullptr,
+                 const ButtonOpts* opts = nullptr);
 
 // A bordered number field with - / + steppers (Element's el-input-number).
 bool input_number(const char* id, double* v, double step = 1.0, double min = 0.0,

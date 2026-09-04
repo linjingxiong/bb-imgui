@@ -49,14 +49,42 @@ const TypeColors& colors_for(ButtonType t) {
 
 } // namespace
 
-bool button(const char* label, ButtonType type, const ButtonOpts& o) {
+namespace {
+
+// Element's per-size padding/font-size/radius (theme-chalk var.scss:
+// $--button-{,medium-,small-,mini-}padding-{vertical,horizontal}, font-size,
+// border-radius). Height isn't a fixed constant in Element — it falls out
+// of line-height + 2*padding-vertical, so we derive it the same way below
+// from the measured text height instead of hardcoding it per size.
+struct SizeSpec { float pad_v, pad_h, font_css, radius; };
+const SizeSpec& size_for(ButtonSize s) {
+    static const SizeSpec table[] = {
+        /*Default*/ {12.0f, 20.0f, 14.0f, theme::RADIUS},
+        /*Medium */ {10.0f, 20.0f, 14.0f, theme::RADIUS},
+        /*Small  */ {9.0f, 15.0f, 12.0f, theme::RADIUS - 1.0f},
+        /*Mini   */ {7.0f, 15.0f, 12.0f, theme::RADIUS - 1.0f},
+    };
+    return table[(int)s];
+}
+
+// Shared by button() and button_group() so a connected group can draw with
+// selective corner rounding while matching button()'s visuals exactly.
+// Returns {clicked, width, height} — button_group needs the size to lay
+// out the next button flush against this one.
+struct ButtonResult { bool clicked; float w, h; };
+
+ButtonResult button_ex(const char* label, ButtonType type, const ButtonOpts& o,
+                       ImDrawFlags round_flags) {
     const TypeColors& c = colors_for(type);
+    const SizeSpec& sz = size_for(o.size);
+    float font_px = sz.font_css * theme::size::CSS;
+    float icon_px = (sz.font_css + 1.0f) * theme::size::CSS;
     ImGui::PushID(label);
 
-    ImGui::PushFont(nullptr, theme::size::SMALL);
+    ImGui::PushFont(nullptr, font_px);
     ImVec2 ts = ImGui::CalcTextSize(o.icon ? "" : label);
     if (o.icon) {
-        ImGui::PushFont(fonts::body(), 15.0f);
+        ImGui::PushFont(fonts::body(), icon_px);
         ImVec2 its = ImGui::CalcTextSize(o.icon);
         ImGui::PopFont();
         ts.x += its.x + (label[0] ? 6.0f : 0.0f);
@@ -64,21 +92,22 @@ bool button(const char* label, ButtonType type, const ButtonOpts& o) {
     }
     ImVec2 lts = ImGui::CalcTextSize(label);
     float text_w = o.icon ? ts.x : lts.x;
+    float text_h = ts.y;
     ImGui::PopFont();
 
-    float h = o.height;
-    // Element's default-size button padding is `12px 20px`.
-    float w = o.circle ? h : text_w + 40.0f;
+    float h = text_h + sz.pad_v * 2.0f;
+    float w = o.circle ? h : text_w + sz.pad_h * 2.0f;
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImVec2 size(w, h);
     ImGui::InvisibleButton("##btn", size);
+    if (o.autofocus) ImGui::SetItemDefaultFocus();
     bool hovered = !o.disabled && !o.loading && ImGui::IsItemHovered();
     bool active = !o.disabled && !o.loading && ImGui::IsItemActive();
     bool clicked = !o.disabled && !o.loading && ImGui::IsItemClicked();
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 br(pos.x + w, pos.y + h);
-    float rounding = o.circle ? h * 0.5f : (o.round ? h * 0.5f : theme::RADIUS);
+    float rounding = o.circle ? h * 0.5f : (o.round ? h * 0.5f : sz.radius);
 
     ImVec4 fill = o.plain ? c.plain_bg : c.base;
     ImVec4 border = o.plain ? c.base : c.base;
@@ -105,9 +134,9 @@ bool button(const char* label, ButtonType type, const ButtonOpts& o) {
         border = ImVec4(border.x, border.y, border.z, 0.5f);
     }
 
-    if (fill.w > 0.001f) dl->AddRectFilled(pos, br, u32(fill), rounding);
+    if (fill.w > 0.001f) dl->AddRectFilled(pos, br, u32(fill), rounding, round_flags);
     if (border.w > 0.001f && type != ButtonType::Text)
-        dl->AddRect(pos, br, u32(border), rounding, 0, 1.0f);
+        dl->AddRect(pos, br, u32(border), rounding, round_flags, 1.0f);
 
     float cx = pos.x + w * 0.5f, cy = pos.y + h * 0.5f;
     if (o.loading) {
@@ -120,10 +149,10 @@ bool button(const char* label, ButtonType type, const ButtonOpts& o) {
                                                        0.2f + 0.8f * (float)i / 8.0f)));
         }
     } else {
-        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::PushFont(nullptr, font_px);
         float x = cx - text_w * 0.5f;
         if (o.icon) {
-            ImGui::PushFont(fonts::body(), 15.0f);
+            ImGui::PushFont(fonts::body(), icon_px);
             ImVec2 its = ImGui::CalcTextSize(o.icon);
             dl->AddText(ImVec2(x, cy - its.y * 0.5f), u32(text_col), o.icon);
             ImGui::PopFont();
@@ -135,6 +164,37 @@ bool button(const char* label, ButtonType type, const ButtonOpts& o) {
     }
 
     ImGui::PopID();
+    return {clicked, w, h};
+}
+
+} // namespace
+
+bool button(const char* label, ButtonType type, const ButtonOpts& o) {
+    return button_ex(label, type, o, ImDrawFlags_RoundCornersAll).clicked;
+}
+
+int button_group(const char* const* labels, int count, const ButtonType* types,
+                 const ButtonOpts* opts) {
+    int clicked = -1;
+    ImVec2 start = ImGui::GetCursorScreenPos();
+    float x = start.x, max_h = 0.0f;
+    for (int i = 0; i < count; i++) {
+        ImGui::PushID(i);
+        ImGui::SetCursorScreenPos(ImVec2(x, start.y));
+        ButtonType t = types ? types[i] : ButtonType::Default;
+        ButtonOpts o = opts ? opts[i] : ButtonOpts{};
+        ImDrawFlags flags = count == 1 ? ImDrawFlags_RoundCornersAll
+                           : i == 0 ? ImDrawFlags_RoundCornersLeft
+                           : i == count - 1 ? ImDrawFlags_RoundCornersRight
+                           : ImDrawFlags_RoundCornersNone;
+        ButtonResult r = button_ex(labels[i], t, o, flags);
+        if (r.clicked) clicked = i;
+        max_h = std::max(max_h, r.h);
+        x += r.w - 1.0f; // 1px overlap so adjacent borders merge into one line
+        ImGui::PopID();
+    }
+    ImGui::SetCursorScreenPos(ImVec2(start.x, start.y));
+    ImGui::Dummy(ImVec2(x - start.x + 1.0f, max_h));
     return clicked;
 }
 

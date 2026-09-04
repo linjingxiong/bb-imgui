@@ -98,6 +98,30 @@ const Entry ENTRIES[] = {
          el::ButtonOpts l; l.loading = g.btn_loading;
          el::button("Loading", el::ButtonType::Primary, l); }},
 
+    {"Button", "Button (size)",
+     "el::ButtonOpts o; o.size = el::ButtonSize::Small;\nel::button(\"Small\", el::ButtonType::Primary, o);",
+     "Four sizes — Default/Medium/Small/Mini — each with its own padding, "
+     "font-size, and (for Small/Mini) a slightly tighter corner radius, "
+     "matching Element's var.scss exactly.",
+     []{ el::ButtonOpts o;
+         el::button("Default", el::ButtonType::Primary, o); ImGui::SameLine();
+         o.size = el::ButtonSize::Medium;
+         el::button("Medium", el::ButtonType::Primary, o); ImGui::SameLine();
+         o.size = el::ButtonSize::Small;
+         el::button("Small", el::ButtonType::Primary, o); ImGui::SameLine();
+         o.size = el::ButtonSize::Mini;
+         el::button("Mini", el::ButtonType::Primary, o); }},
+
+    {"Button", "Button Group", "const char* labels[] = {\"Edit\",\"Copy\",\"Delete\"};\n"
+     "el::button_group(labels, 3);",
+     "Several buttons drawn as one connected pill — flush shared borders, "
+     "square inner corners. Returns the index of whichever one was clicked.",
+     []{ static const char* labels[] = {"Edit", "Copy", "Delete"};
+         static const el::ButtonType types[] = {el::ButtonType::Default,
+             el::ButtonType::Default, el::ButtonType::Danger};
+         int i = el::button_group(labels, 3, types);
+         if (i >= 0) el::message(labels[i], el::NoticeType::Info); }},
+
     // --- Form ------------------------------------------------------------
     {"Form", "Input", "bb::input_text(\"name\", &str);",
      "Single-line text field bound to a std::string.",
