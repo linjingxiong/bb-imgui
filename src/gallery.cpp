@@ -59,33 +59,54 @@ struct Entry {
 // clang-format off
 const Entry ENTRIES[] = {
     // --- Button --------------------------------------------------------
-    {"Button", "Button", "el::button(\"Default\");\nel::button(\"Primary\", el::ButtonType::Primary);",
-     "Six semantic colours: Default / Primary / Success / Warning / Danger / Info.",
-     []{ el::button("Default"); ImGui::SameLine();
-         el::button("Primary", el::ButtonType::Primary); ImGui::SameLine();
-         el::button("Success", el::ButtonType::Success); ImGui::SameLine();
-         el::button("Warning", el::ButtonType::Warning); ImGui::SameLine();
-         el::button("Danger", el::ButtonType::Danger); ImGui::SameLine();
-         el::button("Info", el::ButtonType::Info); }},
-
-    {"Button", "Button (plain)", "el::ButtonOpts o; o.plain = true;\nel::button(\"Primary\", el::ButtonType::Primary, o);",
-     "`plain` swaps the fill for a light tint with a coloured border — Element's "
-     "secondary emphasis.",
-     []{ el::ButtonOpts o; o.plain = true;
-         el::button("Primary", el::ButtonType::Primary, o); ImGui::SameLine();
-         el::button("Success", el::ButtonType::Success, o); ImGui::SameLine();
-         el::button("Danger", el::ButtonType::Danger, o); }},
-
-    {"Button", "Button (round / circle)",
-     "el::ButtonOpts o; o.round = true;\nel::button(\"Search\", el::ButtonType::Primary, o);",
-     "`round` gives pill ends; `circle` (paired with an icon, no label) makes a "
-     "square icon button.",
-     []{ el::ButtonOpts ro; ro.round = true;
-         el::button("Search", el::ButtonType::Primary, ro); ImGui::SameLine();
-         el::ButtonOpts co; co.circle = true; co.icon = ICON_EDIT;
-         el::button("", el::ButtonType::Primary, co); ImGui::SameLine();
-         co.icon = ICON_DELETE;
-         el::button("", el::ButtonType::Danger, co); }},
+    // Reproduces element.eleme.cn's Button "基础用法" example exactly: four
+    // rows (solid / plain / round / circle-icon), each in the canonical
+    // Default-Primary-Success-Info-Warning-Danger order.
+    {"Button", "Basic usage",
+     "el::button(\"Default\");\nel::button(\"Primary\", el::ButtonType::Primary);\n"
+     "el::button(\"Success\", el::ButtonType::Success);\nel::button(\"Info\", el::ButtonType::Info);\n"
+     "el::button(\"Warning\", el::ButtonType::Warning);\nel::button(\"Danger\", el::ButtonType::Danger);\n\n"
+     "// o.plain / o.round / o.circle style a Button (ButtonOpts)",
+     "Use `type`, `plain`, `round`, and `circle` to style a Button.",
+     []{
+         static const el::ButtonType TYPES[] = {
+             el::ButtonType::Default, el::ButtonType::Primary, el::ButtonType::Success,
+             el::ButtonType::Info,    el::ButtonType::Warning, el::ButtonType::Danger,
+         };
+         static const char* LABELS[] = {"Default", "Primary", "Success",
+                                        "Info",    "Warning", "Danger"};
+         // Row 1: solid.
+         for (int i = 0; i < 6; i++) {
+             if (i) ImGui::SameLine();
+             el::button(LABELS[i], TYPES[i]);
+         }
+         ImGui::Dummy(ImVec2(0, 6));
+         // Row 2: plain.
+         el::ButtonOpts plain; plain.plain = true;
+         for (int i = 0; i < 6; i++) {
+             if (i) ImGui::SameLine();
+             el::button(LABELS[i], TYPES[i], plain);
+         }
+         ImGui::Dummy(ImVec2(0, 6));
+         // Row 3: round.
+         el::ButtonOpts round; round.round = true;
+         for (int i = 0; i < 6; i++) {
+             if (i) ImGui::SameLine();
+             el::button(LABELS[i], TYPES[i], round);
+         }
+         ImGui::Dummy(ImVec2(0, 6));
+         // Row 4: circle + icon, no label (search/edit/check/info/star/delete —
+         // no envelope glyph available in the merged icon set, ICON_INFO
+         // substitutes for the "info"-type slot).
+         static const char* ICONS[] = {ICON_SEARCH, ICON_EDIT, ICON_CHECK,
+                                       ICON_INFO,   ICON_STAR, ICON_DELETE};
+         el::ButtonOpts circle; circle.circle = true;
+         for (int i = 0; i < 6; i++) {
+             if (i) ImGui::SameLine();
+             circle.icon = ICONS[i];
+             el::button("", TYPES[i], circle);
+         }
+     }},
 
     {"Button", "Button (disabled / loading)",
      "el::ButtonOpts o; o.disabled = true;\nel::button(\"Confirm\", el::ButtonType::Primary, o);",
