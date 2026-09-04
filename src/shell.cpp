@@ -14,10 +14,6 @@
 
 namespace shell {
 
-const char* const MENU_POINTS[] = {"File",  "Edit", "Transform", "UV",
-                                   "Tools", "View", "Help"};
-const int MENU_POINT_COUNT = (int)(sizeof(MENU_POINTS) / sizeof(MENU_POINTS[0]));
-
 namespace {
 
 bool  g_first_run = false;
@@ -29,6 +25,10 @@ int            g_nav_count = 0;
 int            g_nav_active = 0;
 const char*    g_status_left = "";
 const char*    g_status_right = "";
+
+const menu::Menu* g_menus = nullptr;
+int               g_menu_count = 0;
+const char*       g_menu_clicked = nullptr;
 
 ImU32 u32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
 
@@ -113,23 +113,14 @@ void titlebar(GLFWwindow* win) {
     ImGui::PopFont();
 
     float x = tl.x + 12 + ImGui::CalcTextSize("Blockbench").x + 18;
+    g_menu_clicked = nullptr;
     ImGui::PushFont(nullptr, theme::size::MENU_POINT);
-    for (int i = 0; i < MENU_POINT_COUNT; i++) {
-        const char* label = MENU_POINTS[i];
-        ImVec2 ts = ImGui::CalcTextSize(label);
-        ImVec2 bpos(x, tl.y);
-        ImVec2 bsize(ts.x + 20, TITLEBAR_H);
-        ImGui::SetCursorScreenPos(bpos);
-        char mid[24];
-        std::snprintf(mid, sizeof(mid), "##menu%d", i);
-        ImGui::InvisibleButton(mid, bsize);
-        bool hovered = ImGui::IsItemHovered();
-        if (hovered)
-            dl->AddRectFilled(bpos, ImVec2(bpos.x + bsize.x, bpos.y + bsize.y),
-                              u32(theme::palette().ui));
-        dl->AddText(ImVec2(x + 10, tl.y + (TITLEBAR_H - ts.y) * 0.5f),
-                    u32(hovered ? p.light : p.text), label);
-        x += bsize.x;
+    for (int i = 0; i < g_menu_count; i++) {
+        const menu::Menu& m = g_menus[i];
+        float bw = ImGui::CalcTextSize(m.name).x + 22;
+        if (const char* hit = menu::point(m, i, ImVec2(x, tl.y), ImVec2(bw, TITLEBAR_H)))
+            g_menu_clicked = hit;
+        x += bw;
     }
     ImGui::PopFont();
     ImGui::PopStyleVar(2);
@@ -385,5 +376,10 @@ void set_status(const char* left, const char* right) {
     g_status_left = left ? left : "";
     g_status_right = right ? right : "";
 }
+void set_menus(const menu::Menu* menus, int count) {
+    g_menus = menus;
+    g_menu_count = count;
+}
+const char* menu_clicked() { return g_menu_clicked; }
 
 } // namespace shell

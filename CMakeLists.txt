@@ -108,6 +108,7 @@ add_executable(bb_imgui
     src/theme.cpp
     src/fonts.cpp
     src/shell.cpp
+    src/menu.cpp
     src/bb.cpp
 )
 target_link_libraries(bb_imgui PRIVATE imgui glfw wgpu_native nlohmann_json::nlohmann_json)

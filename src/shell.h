@@ -4,6 +4,7 @@
 #pragma once
 
 #include "imgui.h"
+#include "menu.h"
 
 struct GLFWwindow;
 
@@ -13,10 +14,11 @@ inline constexpr float TITLEBAR_H = 30.0f;
 inline constexpr float RAIL_W = 48.0f;
 inline constexpr float STATUS_H = 26.0f;
 
-// Menu-bar points shown in the title bar. Phase 3 makes them open real menus;
-// for now they are inert hover targets so the layout is right.
-extern const char* const MENU_POINTS[];
-extern const int MENU_POINT_COUNT;
+// Title-bar menu points (File / Edit / …). Pointer must stay valid.
+void set_menus(const menu::Menu* menus, int count);
+
+// Label of the menu item activated this frame, or nullptr. Valid after begin().
+const char* menu_clicked();
 
 // One entry in the left icon rail.
 struct NavItem {

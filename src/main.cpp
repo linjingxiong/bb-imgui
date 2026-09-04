@@ -13,6 +13,7 @@
 #include "bb.h"
 #include "fonts.h"
 #include "icons.h"
+#include "menu.h"
 #include "shell.h"
 #include "theme.h"
 
@@ -21,6 +22,85 @@
 
 #include <GLFW/glfw3.h>
 #include <webgpu/webgpu.h>
+
+// ---------------------------------------------------------------------------
+// Title-bar menus (mirrors Blockbench's menu bar)
+// ---------------------------------------------------------------------------
+namespace {
+using menu::Item;
+const Item SEP{};
+
+const Item FILE_ITEMS[] = {
+    {ICON_PHOTO_LIBRARY, "Open MCAP\xe2\x80\xa6"},
+    SEP,
+    {ICON_FILE, "New", nullptr, false, true},
+    {ICON_HISTORY, "Recent", nullptr, false, true},
+    {ICON_FOLDER_OPEN, "Open Model\xe2\x80\xa6", "Ctrl+O"},
+    {ICON_NEW_WINDOW, "New Window"},
+    SEP,
+    {ICON_SAVE, "Save", "Ctrl+S"},
+    {ICON_SAVE_AS, "Save As\xe2\x80\xa6", "Ctrl+Shift+S"},
+    {ICON_CLOSE, "Close Project"},
+    SEP,
+    {ICON_FILE, "Import", nullptr, false, true},
+    {ICON_FILE, "Export", nullptr, false, true},
+    SEP,
+    {ICON_SETTINGS, "Settings\xe2\x80\xa6"},
+    {ICON_KEYBOARD, "Keybindings\xe2\x80\xa6"},
+    {ICON_DARK_MODE, "Themes\xe2\x80\xa6"},
+};
+const Item EDIT_ITEMS[] = {
+    {ICON_UNDO, "Undo", "Ctrl+Z"},
+    {ICON_REDO, "Redo", "Ctrl+Y"},
+    {ICON_HISTORY, "Edit History\xe2\x80\xa6"},
+    SEP,
+    {ICON_ADD, "Add Cube", "Ctrl+N"},
+    {ICON_ADD, "Add Group", "Ctrl+G"},
+    SEP,
+    {ICON_COPY, "Copy", "Ctrl+C"},
+    {ICON_PASTE, "Paste", "Ctrl+V"},
+    {ICON_EDIT, "Rename", "F2"},
+    {ICON_DELETE, "Delete", "Del"},
+    SEP,
+    {ICON_SEARCH, "Find / Replace\xe2\x80\xa6"},
+    {ICON_VISIBILITY, "Select All", "Ctrl+A"},
+};
+const Item TRANSFORM_ITEMS[] = {
+    {ICON_SETTINGS_OVERSCAN, "Scale\xe2\x80\xa6"},
+    {ICON_ROTATE, "Rotate", nullptr, false, true},
+    {ICON_FLIP, "Flip", nullptr, false, true},
+    {ICON_CENTER_FOCUS, "Center", nullptr, false, true},
+};
+const Item VIEW_ITEMS[] = {
+    {ICON_FULLSCREEN, "Fullscreen", "F11"},
+    {ICON_GRID, "Toggle Grid", nullptr, true},
+    {ICON_VISIBILITY, "Toggle Wireframe", "Z"},
+    SEP,
+    {ICON_CENTER_FOCUS, "Camera Angle", nullptr, false, true},
+    SEP,
+    {ICON_TUNE, "Component gallery\xe2\x80\xa6"},
+};
+const Item TOOLS_ITEMS[] = {
+    {ICON_BRUSH, "Paint Brush", "B"},
+    {ICON_TUNE, "Color Picker", "I"},
+    SEP,
+    {ICON_FILE, "Plugins\xe2\x80\xa6"},
+};
+const Item HELP_ITEMS[] = {
+    {ICON_HELP, "Quickstart"},
+    {ICON_FILE, "Documentation"},
+    SEP,
+    {ICON_INFO, "About"},
+};
+
+#define MENU(name, arr) menu::Menu{name, arr, (int)(sizeof(arr) / sizeof(arr[0]))}
+const menu::Menu MENUS[] = {
+    MENU("File", FILE_ITEMS),       MENU("Edit", EDIT_ITEMS),
+    MENU("Transform", TRANSFORM_ITEMS), MENU("Tools", TOOLS_ITEMS),
+    MENU("View", VIEW_ITEMS),       MENU("Help", HELP_ITEMS),
+};
+#undef MENU
+} // namespace
 
 // ---------------------------------------------------------------------------
 // WebGPU context
@@ -223,6 +303,7 @@ int main(int, char**) {
         {ICON_SETTINGS, "Settings"},
     };
     shell::set_nav(nav, (int)(sizeof(nav) / sizeof(nav[0])));
+    shell::set_menus(MENUS, (int)(sizeof(MENUS) / sizeof(MENUS[0])));
 
     ImGui_ImplGlfw_InitForOther(window, true);
     ImGui_ImplWGPU_InitInfo init_info;
@@ -270,6 +351,10 @@ int main(int, char**) {
 
         shell::begin(window);
 
+        static const char* last_action = "(none)";
+        if (const char* a = shell::menu_clicked())
+            last_action = a;
+
         const char* pages[] = {"UV", "Textures", "Palette", "Reference", "Settings"};
         int page = shell::nav_active();
 
@@ -284,6 +369,8 @@ int main(int, char**) {
             ImGui::TextUnformatted("Central workspace");
             ImGui::PopFont();
             ImGui::TextDisabled("%.1f FPS", (double)io.Framerate);
+            ImGui::Spacing();
+            ImGui::Text("last menu action: %s", last_action);
         }
         bb::end_panel();
 
