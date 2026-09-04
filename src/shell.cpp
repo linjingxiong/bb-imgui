@@ -126,7 +126,7 @@ void titlebar(GLFWwindow* win) {
 
     float x = tl.x + 10 + wordmark_w + 16;
     g_menu_clicked = nullptr;
-    ImGui::PushFont(nullptr, theme::size::MENU_POINT);
+    ImGui::PushFont(fonts::medium(), theme::size::MENU_POINT);
     for (int i = 0; i < g_menu_count; i++) {
         const menu::Menu& m = g_menus[i];
         float bw = ImMax(ImGui::CalcTextSize(m.name).x + 16.0f, 42.0f); // BB: pad 8, min-w 42

@@ -60,11 +60,11 @@ void install(float /*dpi_scale*/) {
     ImGui::GetStyle().FontSizeBase = theme::size::BODY;
 
     // Assistant is a light face; stb_truetype renders thin strokes lighter than
-    // a browser would. A small brighten + extra oversampling closes the gap.
+    // a browser (DirectWrite) would. A brighten multiplier closes most of the gap.
+    // (The dynamic atlas already bakes at high density — extra oversampling here
+    // just bloats the atlas and tanks the frame rate.)
     ImFontConfig cfg;
-    cfg.RasterizerMultiply = 1.18f;
-    cfg.OversampleH = 3;
-    cfg.OversampleV = 2;
+    cfg.RasterizerMultiply = 1.35f;
 
     g_body = io.Fonts->AddFontFromFileTTF(regular.c_str(), theme::size::BODY, &cfg);
     if (g_body)
