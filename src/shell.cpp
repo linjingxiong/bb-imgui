@@ -9,6 +9,7 @@
 #include <GLFW/glfw3.h>
 
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 namespace shell {
@@ -23,7 +24,17 @@ bool  g_first_run = false;
 bool  g_dragging = false;
 double g_grab_x = 0, g_grab_y = 0;
 
+const NavItem* g_nav = nullptr;
+int            g_nav_count = 0;
+int            g_nav_active = 0;
+const char*    g_status_left = "";
+const char*    g_status_right = "";
+
 ImU32 u32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
+
+ImVec4 mix(const ImVec4& a, const ImVec4& b, float t) {
+    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, 1.0f);
+}
 
 bool is_maximized(GLFWwindow* w) {
     return glfwGetWindowAttrib(w, GLFW_MAXIMIZED) != 0;
@@ -109,7 +120,9 @@ void titlebar(GLFWwindow* win) {
         ImVec2 bpos(x, tl.y);
         ImVec2 bsize(ts.x + 20, TITLEBAR_H);
         ImGui::SetCursorScreenPos(bpos);
-        ImGui::InvisibleButton(label, bsize);
+        char mid[24];
+        std::snprintf(mid, sizeof(mid), "##menu%d", i);
+        ImGui::InvisibleButton(mid, bsize);
         bool hovered = ImGui::IsItemHovered();
         if (hovered)
             dl->AddRectFilled(bpos, ImVec2(bpos.x + bsize.x, bpos.y + bsize.y),
@@ -230,6 +243,73 @@ void resize_handles(GLFWwindow* win) {
         active = -1;
 }
 
+// Left icon navigation rail. Spans from under the title bar to above the status
+// bar. Active item: 2px accent bar + accent glyph.
+void left_rail() {
+    const theme::Palette& p = theme::palette();
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    ImVec2 tl(vp->Pos.x, vp->Pos.y + TITLEBAR_H);
+    ImVec2 br(vp->Pos.x + RAIL_W, vp->Pos.y + vp->Size.y - STATUS_H);
+    dl->AddRectFilled(tl, br, u32(p.back));
+    dl->AddLine(ImVec2(br.x - 0.5f, tl.y), ImVec2(br.x - 0.5f, br.y), u32(p.border), 1.0f);
+
+    if (!g_nav || g_nav_count == 0)
+        return;
+
+    const float item_h = 44.0f;
+    ImGui::PushFont(fonts::body(), 20.0f);
+    float y = tl.y + 6.0f;
+    for (int i = 0; i < g_nav_count; i++) {
+        const NavItem& it = g_nav[i];
+        bool active = (i == g_nav_active);
+        ImVec2 pos(tl.x, y);
+        ImGui::SetCursorScreenPos(pos);
+        char id[16];
+        std::snprintf(id, sizeof(id), "##nav%d", i);
+        ImGui::InvisibleButton(id, ImVec2(RAIL_W, item_h));
+        bool hovered = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            g_nav_active = i;
+        if (hovered && !active)
+            dl->AddRectFilled(pos, ImVec2(pos.x + RAIL_W, pos.y + item_h),
+                              u32(mix(p.ui, p.light, 0.05f)));
+        if (active)
+            dl->AddRectFilled(pos, ImVec2(pos.x + 2.0f, pos.y + item_h), u32(p.accent));
+
+        ImU32 gc = u32(active ? p.accent : (hovered ? p.light : p.subtle_text));
+        ImVec2 ts = ImGui::CalcTextSize(it.icon);
+        dl->AddText(ImVec2(pos.x + (RAIL_W - ts.x) * 0.5f, pos.y + (item_h - ts.y) * 0.5f),
+                    gc, it.icon);
+        if (hovered && it.tooltip[0])
+            ImGui::SetTooltip("%s", it.tooltip);
+        y += item_h;
+    }
+    ImGui::PopFont();
+}
+
+void status_bar() {
+    const theme::Palette& p = theme::palette();
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    ImVec2 tl(vp->Pos.x, vp->Pos.y + vp->Size.y - STATUS_H);
+    ImVec2 br(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y);
+    dl->AddRectFilled(tl, br, u32(p.back));
+    dl->AddLine(ImVec2(tl.x, tl.y + 0.5f), ImVec2(br.x, tl.y + 0.5f), u32(p.border), 1.0f);
+
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    float ty = tl.y + (STATUS_H - ImGui::GetTextLineHeight()) * 0.5f;
+    if (g_status_left && g_status_left[0])
+        dl->AddText(ImVec2(tl.x + 12, ty), u32(p.subtle_text), g_status_left);
+    if (g_status_right && g_status_right[0]) {
+        ImVec2 ts = ImGui::CalcTextSize(g_status_right);
+        dl->AddText(ImVec2(br.x - 12 - ts.x, ty), u32(p.subtle_text), g_status_right);
+    }
+    ImGui::PopFont();
+}
+
 } // namespace
 
 // Default panel layout, built with DockBuilder the first time. Panel windows
@@ -240,8 +320,12 @@ void build_default_layout(ImGuiID dock_id, ImVec2 size) {
     ImGui::DockBuilderSetNodeSize(dock_id, size);
 
     ImGuiID center = dock_id;
-    ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.22f, nullptr, &center);
-    ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.30f, nullptr, &center);
+    ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.24f, nullptr, &center);
+    ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.32f, nullptr, &center);
+
+    for (ImGuiID id : {left, right, center})
+        if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(id))
+            n->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
 
     ImGui::DockBuilderDockWindow("Left", left);
     ImGui::DockBuilderDockWindow("Right", right);
@@ -267,15 +351,17 @@ ImGuiID begin(GLFWwindow* window) {
 
     resize_handles(window);
     titlebar(window);
+    left_rail();
+    status_bar();
 
     ImGuiID dock_id = ImGui::GetID("##dockspace");
-    const ImVec2 dock_size(vp->Size.x, vp->Size.y - TITLEBAR_H);
+    const ImVec2 dock_size(vp->Size.x - RAIL_W, vp->Size.y - TITLEBAR_H - STATUS_H);
 
     g_first_run = (ImGui::DockBuilderGetNode(dock_id) == nullptr);
     if (g_first_run)
         build_default_layout(dock_id, dock_size);
 
-    ImGui::SetCursorScreenPos(ImVec2(vp->Pos.x, vp->Pos.y + TITLEBAR_H));
+    ImGui::SetCursorScreenPos(ImVec2(vp->Pos.x + RAIL_W, vp->Pos.y + TITLEBAR_H));
     ImGui::DockSpace(dock_id, dock_size, ImGuiDockNodeFlags_None);
     return dock_id;
 }
@@ -283,5 +369,21 @@ ImGuiID begin(GLFWwindow* window) {
 void end() { ImGui::End(); }
 
 bool first_run() { return g_first_run; }
+
+void set_nav(const NavItem* items, int count) {
+    g_nav = items;
+    g_nav_count = count;
+    if (g_nav_active >= count)
+        g_nav_active = 0;
+}
+int  nav_active() { return g_nav_active; }
+void set_nav_active(int index) {
+    if (index >= 0 && index < g_nav_count)
+        g_nav_active = index;
+}
+void set_status(const char* left, const char* right) {
+    g_status_left = left ? left : "";
+    g_status_right = right ? right : "";
+}
 
 } // namespace shell

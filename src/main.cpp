@@ -10,7 +10,9 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_wgpu.h"
 
+#include "bb.h"
 #include "fonts.h"
+#include "icons.h"
 #include "shell.h"
 #include "theme.h"
 
@@ -215,6 +217,13 @@ int main(int, char**) {
     theme::apply(theme::load());
     fonts::install(1.0f);
 
+    static const shell::NavItem nav[] = {
+        {ICON_GRID, "UV"},        {ICON_IMAGE, "Textures"},
+        {ICON_PALETTE, "Palette"}, {ICON_PHOTO_LIBRARY, "Reference"},
+        {ICON_SETTINGS, "Settings"},
+    };
+    shell::set_nav(nav, (int)(sizeof(nav) / sizeof(nav[0])));
+
     ImGui_ImplGlfw_InitForOther(window, true);
     ImGui_ImplWGPU_InitInfo init_info;
     init_info.Device = g_device;
@@ -255,24 +264,34 @@ int main(int, char**) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        char status_r[64];
+        std::snprintf(status_r, sizeof(status_r), "%.0f FPS  \xc2\xb7  wgpu", (double)io.Framerate);
+        shell::set_status("Ready", status_r);
+
         shell::begin(window);
 
-        ImGui::Begin("Left");
-        ImGui::TextUnformatted("nav / outliner (phase 2)");
-        ImGui::End();
+        const char* pages[] = {"UV", "Textures", "Palette", "Reference", "Settings"};
+        int page = shell::nav_active();
 
-        ImGui::Begin("Workspace");
-        ImGui::TextUnformatted("central workspace");
-        ImGui::Separator();
-        ImGui::Text("%.1f FPS", (double)io.Framerate);
-        ImGui::PushFont(fonts::medium(), theme::size::HEADING);
-        ImGui::TextUnformatted("Assistant SemiBold heading");
-        ImGui::PopFont();
-        ImGui::End();
+        if (bb::begin_panel("Left")) {
+            ImGui::TextUnformatted(pages[page]);
+            ImGui::TextDisabled("panel content — phase 4");
+        }
+        bb::end_panel();
 
-        ImGui::Begin("Right");
-        ImGui::TextUnformatted("inspector (phase 2)");
-        ImGui::End();
+        if (bb::begin_panel("Workspace")) {
+            ImGui::PushFont(fonts::medium(), theme::size::HEADING);
+            ImGui::TextUnformatted("Central workspace");
+            ImGui::PopFont();
+            ImGui::TextDisabled("%.1f FPS", (double)io.Framerate);
+        }
+        bb::end_panel();
+
+        if (bb::begin_panel("Right")) {
+            ImGui::TextUnformatted("Inspector");
+            ImGui::TextDisabled("phase 4");
+        }
+        bb::end_panel();
 
         shell::end();
 
