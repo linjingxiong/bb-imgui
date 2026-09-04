@@ -893,4 +893,164 @@ int dropdown(const char* id, const char* label, const char* const* items, int co
     return clicked;
 }
 
+// ===========================================================================
+// Others (Batch 5)
+// ===========================================================================
+bool dialog_begin(const char* id, const char* title, bool* open, float width) {
+    const theme::Palette& p = theme::palette();
+    if (*open && !ImGui::IsPopupOpen(id)) ImGui::OpenPopup(id);
+
+    ImGui::SetNextWindowSize(ImVec2(width, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, theme::RADIUS);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, p.ui);
+    bool visible = ImGui::BeginPopupModal(id, nullptr,
+        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+    if (!visible) {
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+        return false;
+    }
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0 = ImGui::GetWindowPos();
+    float w = ImGui::GetWindowWidth();
+    float bar_h = 48.0f;
+    dl->AddLine(ImVec2(p0.x, p0.y + bar_h), ImVec2(p0.x + w, p0.y + bar_h), u32(p.border));
+    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+    ImVec2 ts = ImGui::CalcTextSize(title);
+    dl->AddText(ImVec2(p0.x + 20, p0.y + (bar_h - ts.y) * 0.5f), u32(p.light), title);
+    ImGui::PopFont();
+
+    ImGui::SetCursorScreenPos(ImVec2(p0.x + w - 34, p0.y + (bar_h - 16) * 0.5f));
+    ImGui::InvisibleButton("close", ImVec2(16, 16));
+    bool close_hov = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked()) { *open = false; ImGui::CloseCurrentPopup(); }
+    ImVec2 xp = ImGui::GetItemRectMin();
+    ImVec4 xc = close_hov ? p.accent : p.subtle_text;
+    dl->AddLine(xp, ImVec2(xp.x + 16, xp.y + 16), u32(xc), 1.3f);
+    dl->AddLine(ImVec2(xp.x, xp.y + 16), ImVec2(xp.x + 16, xp.y), u32(xc), 1.3f);
+
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + bar_h));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 16));
+    ImGui::BeginChild("body", ImVec2(w, 0), ImGuiChildFlags_AutoResizeY);
+    return true;
+}
+
+void dialog_end() {
+    ImGui::EndChild();
+    ImGui::PopStyleVar(); // body padding
+    ImGui::EndPopup();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2); // rounding, outer padding
+}
+
+void tooltip(const char* text) {
+    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) return;
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, rgb(0x30, 0x31, 0x33));
+    ImGui::PushStyleColor(ImGuiCol_Text, rgb(0xff, 0xff, 0xff));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 3.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 5));
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.92f);
+    ImGui::SetTooltip("%s", text);
+    ImGui::PopFont();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+}
+
+void popover_style_push() {
+    const theme::Palette& p = theme::palette();
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, p.ui);
+    ImGui::PushStyleColor(ImGuiCol_Border, p.border);
+    ImGui::PushStyleColor(ImGuiCol_Text, p.text);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, theme::RADIUS);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 12));
+}
+void popover_style_pop() {
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(3);
+}
+
+bool collapse_item(const char* title, bool* open) {
+    const theme::Palette& p = theme::palette();
+    ImGui::PushID(title);
+    float h = 40.0f;
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("hdr", ImVec2(w, h));
+    bool hovered = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked()) *open = !*open;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), u32(hovered ? p.selected : p.ui));
+    dl->AddLine(ImVec2(pos.x, pos.y + h), ImVec2(pos.x + w, pos.y + h), u32(p.border));
+
+    ImGui::PushFont(fonts::body(), 13.0f);
+    ImVec2 its = ImGui::CalcTextSize(ICON_CHEVRON_RIGHT);
+    dl->AddText(ImVec2(pos.x + 4, pos.y + (h - its.y) * 0.5f), u32(p.subtle_text),
+                ICON_CHEVRON_RIGHT); // pointing right; state shown by colour only in this pass
+    ImGui::PopFont();
+
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    ImVec2 ts = ImGui::CalcTextSize(title);
+    dl->AddText(ImVec2(pos.x + 24, pos.y + (h - ts.y) * 0.5f),
+                u32(*open ? p.accent : p.text), title);
+    ImGui::PopFont();
+
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + h));
+    if (*open) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 12));
+        ImGui::BeginChild(ImGui::GetID("panel"), ImVec2(w, 0), ImGuiChildFlags_AutoResizeY);
+    }
+    ImGui::PopID();
+    return *open;
+}
+
+void collapse_pop() {
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+}
+
+void timeline(const TimelineItem* items, int count) {
+    const theme::Palette& p = theme::palette();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float dot_r = 4.5f, line_x_off = dot_r;
+    for (int i = 0; i < count; i++) {
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        float x = pos.x + line_x_off;
+
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImVec2 tts = ImGui::CalcTextSize(items[i].time);
+        ImGui::PopFont();
+        ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+        ImVec2 hts = ImGui::CalcTextSize(items[i].title);
+        ImGui::PopFont();
+        float desc_h = 0.0f;
+        if (items[i].desc) {
+            ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
+            desc_h = ImGui::CalcTextSize(items[i].desc).y + 4.0f;
+            ImGui::PopFont();
+        }
+        float row_h = hts.y + desc_h + tts.y + 14.0f;
+
+        dl->AddCircleFilled(ImVec2(x, pos.y + 6), dot_r, u32(p.accent));
+        if (i + 1 < count)
+            dl->AddLine(ImVec2(x, pos.y + 6 + dot_r), ImVec2(x, pos.y + row_h),
+                        u32(p.border), 1.5f);
+
+        float tx = x + 16.0f;
+        dl->AddText(ImVec2(tx, pos.y), u32(p.light), items[i].title);
+        dl->AddText(ImVec2(tx + hts.x + 10, pos.y + (hts.y - tts.y) * 0.5f), u32(p.subtle_text),
+                    items[i].time);
+        if (items[i].desc) {
+            ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
+            dl->AddText(ImVec2(tx, pos.y + hts.y + 4), u32(p.text), items[i].desc);
+            ImGui::PopFont();
+        }
+
+        ImGui::Dummy(ImVec2(1, row_h));
+    }
+}
+
 } // namespace el

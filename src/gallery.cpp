@@ -42,6 +42,9 @@ struct State {
     int    tabs_current = 0;
     int    steps_current = 1;
     std::string dropdown_pick = "(none)";
+
+    bool   dialog_open = false;
+    bool   collapse_open[2] = {true, false};
 };
 State g;
 
@@ -298,6 +301,70 @@ const Entry ENTRIES[] = {
          if (i >= 0) g.dropdown_pick = items[i];
          ImGui::SameLine();
          ImGui::TextDisabled("picked: %s", g.dropdown_pick.c_str()); }},
+
+    // --- Others ----------------------------------------------------------
+    {"Others", "Dialog", "el::dialog(\"d\", \"Title\", &open, [] {\n"
+     "    ImGui::TextUnformatted(\"Body content\");\n});",
+     "A modal dialog with a title bar and close button around free-form "
+     "content.",
+     []{ if (bb::button("Open dialog")) g.dialog_open = true;
+         el::dialog("demo", "Rename cube", &g.dialog_open, [] {
+             static std::string name = "Cube";
+             bb::field_label("Name");
+             bb::input_text("name", &name);
+             ImGui::Dummy(ImVec2(0, 12));
+             ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 160);
+             if (el::button("Cancel")) g.dialog_open = false;
+             ImGui::SameLine(0, 8);
+             if (el::button("Confirm", el::ButtonType::Primary)) g.dialog_open = false;
+         }); }},
+
+    {"Others", "Tooltip", "bb::button(\"Hover me\");\nel::tooltip(\"Helpful text\");",
+     "A small dark tooltip shown when the previous item is hovered.",
+     []{ bb::button("Hover me"); el::tooltip("This is a tooltip."); }},
+
+    {"Others", "Popover", "bb::button(\"Click me\");\n"
+     "el::popover(\"p\", [] { ImGui::TextUnformatted(\"Rich content here\"); });",
+     "A white bordered popover anchored under the trigger, opened by "
+     "clicking it.",
+     []{ bb::button("Click me");
+         el::popover("demo", [] {
+             ImGui::PushFont(nullptr, theme::size::SMALL);
+             ImGui::TextUnformatted("Popover title");
+             ImGui::PopFont();
+             ImGui::TextDisabled("Any content can go here.");
+         }); }},
+
+    {"Others", "Collapse", "if (el::collapse_item(\"Section\", &open)) {\n"
+     "    ImGui::TextUnformatted(\"...\");\n    el::collapse_pop();\n}",
+     "An accordion-style panel; each panel tracks its own open state.",
+     []{ if (el::collapse_item("Consistency", &g.collapse_open[0])) {
+             ImGui::TextWrapped("Consistent with real life: in line with the "
+                                "process and logic of real life.");
+             el::collapse_pop();
+         }
+         if (el::collapse_item("Feedback", &g.collapse_open[1])) {
+             ImGui::TextWrapped("Operation feedback: enable users to clearly "
+                                "perceive their operations.");
+             el::collapse_pop();
+         } }},
+
+    {"Others", "Timeline", "el::TimelineItem items[] = {\n"
+     "    {\"2026-09-01\", \"Created\"},\n    {\"2026-09-03\", \"Reviewed\"},\n};\n"
+     "el::timeline(items, 2);",
+     "A vertical dot-and-line list of dated events.",
+     []{ static const el::TimelineItem items[] = {
+             {"2026-09-05", "Batch 5 shipped", "Others: Dialog, Tooltip, Popover, Collapse, Timeline."},
+             {"2026-09-04", "Element theme", "Switched the palette to Element's blue/white light theme."},
+             {"2026-09-01", "Branch created", nullptr},
+         };
+         el::timeline(items, 3); }},
+
+    {"Others", "Divider", "el::divider();\nel::divider(\"Section\");",
+     "A horizontal rule, optionally with centred text.",
+     []{ ImGui::TextUnformatted("Above"); el::divider();
+         ImGui::TextUnformatted("Between"); el::divider("More");
+         ImGui::TextUnformatted("Below"); }},
 };
 constexpr int COUNT = (int)(sizeof(ENTRIES) / sizeof(ENTRIES[0]));
 

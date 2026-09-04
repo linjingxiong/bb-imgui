@@ -149,4 +149,57 @@ void steps(const char* const* labels, int count, int current);
 // Returns the 0-based index of the clicked item this frame, or -1.
 int dropdown(const char* id, const char* label, const char* const* items, int count);
 
+// ---------------------------------------------------------------------------
+// Others (Batch 5)
+// ---------------------------------------------------------------------------
+
+// A modal dialog with a title bar (title text + close X) around free-form
+// content (el-dialog). Only draws while `*open` is true; the close X (or
+// dialog_end()'s caller) clears it. Mirrors card_begin/card_end/card.
+bool dialog_begin(const char* id, const char* title, bool* open, float width = 420.0f);
+void dialog_end();
+template <typename Fn>
+void dialog(const char* id, const char* title, bool* open, Fn&& body, float width = 420.0f) {
+    if (dialog_begin(id, title, open, width)) {
+        body();
+        dialog_end();
+    }
+}
+
+// A small dark tooltip shown when the previously-drawn item is hovered
+// (el-tooltip). Call immediately after that item.
+void tooltip(const char* text);
+
+// A white bordered popover anchored under the previously-drawn item,
+// opened by clicking it (el-popover). `body` draws the popover's content.
+template <typename Fn>
+void popover(const char* id, Fn&& body) {
+    if (ImGui::IsItemClicked()) ImGui::OpenPopup(id);
+    popover_style_push();
+    if (ImGui::BeginPopup(id)) {
+        body();
+        ImGui::EndPopup();
+    }
+    popover_style_pop();
+}
+// (Style helpers behind popover<Fn>() above — not meant to be called
+// directly, but declared here since the template needs them.)
+void popover_style_push();
+void popover_style_pop();
+
+// One panel of an el-collapse accordion. Call for each panel; if it
+// returns true, draw the panel body then call collapse_pop(). `*open`
+// holds this panel's own expanded state (independent panels, not a
+// single-open accordion).
+bool collapse_item(const char* title, bool* open);
+void collapse_pop();
+
+struct TimelineItem {
+    const char* time;
+    const char* title;
+    const char* desc = nullptr;
+};
+// A vertical dot-and-line timeline (el-timeline).
+void timeline(const TimelineItem* items, int count);
+
 } // namespace el
