@@ -48,9 +48,16 @@ struct State {
 };
 State g;
 
+// One example block. Several Entry rows can share the same `component` —
+// they're all shown stacked on that component's one page (mirrors
+// element.eleme.cn: one nav entry per component, several named examples on
+// its page), instead of the page-per-example layout this used to have.
+// `example` is the sub-heading for one of several examples; leave it null
+// when a component only has a single example (most of them).
 struct Entry {
-    const char* group;
-    const char* name;
+    const char* group;     // nav category heading: Button/Form/Data/Notice/Navigation/Others
+    const char* component; // nav row label + page title, e.g. "Button", "Input"
+    const char* example;   // sub-heading when a component has >1 example, else nullptr
     const char* code;
     const char* note;
     std::function<void()> demo;
@@ -59,10 +66,11 @@ struct Entry {
 // clang-format off
 const Entry ENTRIES[] = {
     // --- Button --------------------------------------------------------
-    // Reproduces element.eleme.cn's Button "基础用法" example exactly: four
-    // rows (solid / plain / round / circle-icon), each in the canonical
-    // Default-Primary-Success-Info-Warning-Danger order.
-    {"Button", "Basic usage",
+    // Reproduces element.eleme.cn's Button page: one component, several
+    // named examples stacked on one page (Basic usage / Disabled+Loading /
+    // Size / Icon Button / Button Group), each in the canonical
+    // Default-Primary-Success-Info-Warning-Danger order where relevant.
+    {"Button", "Button", "Basic usage",
      "el::button(\"Default\");\nel::button(\"Primary\", el::ButtonType::Primary);\n"
      "el::button(\"Success\", el::ButtonType::Success);\nel::button(\"Info\", el::ButtonType::Info);\n"
      "el::button(\"Warning\", el::ButtonType::Warning);\nel::button(\"Danger\", el::ButtonType::Danger);\n\n"
@@ -108,7 +116,7 @@ const Entry ENTRIES[] = {
          }
      }},
 
-    {"Button", "Button (disabled / loading)",
+    {"Button", "Button", "Disabled / Loading",
      "el::ButtonOpts o; o.disabled = true;\nel::button(\"Confirm\", el::ButtonType::Primary, o);",
      "Disabled buttons ignore clicks and fade to 50% alpha; loading buttons show "
      "a spinner in place of the label.",
@@ -119,7 +127,7 @@ const Entry ENTRIES[] = {
          el::ButtonOpts l; l.loading = g.btn_loading;
          el::button("Loading", el::ButtonType::Primary, l); }},
 
-    {"Button", "Button (size)",
+    {"Button", "Button", "Size",
      "el::ButtonOpts o; o.size = el::ButtonSize::Small;\nel::button(\"Small\", el::ButtonType::Primary, o);",
      "Four sizes — Default/Medium/Small/Mini — each with its own padding, "
      "font-size, and (for Small/Mini) a slightly tighter corner radius, "
@@ -133,55 +141,87 @@ const Entry ENTRIES[] = {
          o.size = el::ButtonSize::Mini;
          el::button("Mini", el::ButtonType::Primary, o); }},
 
-    {"Button", "Button Group", "const char* labels[] = {\"Edit\",\"Copy\",\"Delete\"};\n"
+    {"Button", "Button", "Icon Button",
+     "el::ButtonOpts o; o.icon = ICON_EDIT;\nel::button(\"\", el::ButtonType::Primary, o);",
+     "Icon buttons increase recognisability (with a label) or save space "
+     "(without one).",
+     []{ el::ButtonOpts o; o.icon = ICON_EDIT;
+         el::button("", el::ButtonType::Primary, o); ImGui::SameLine();
+         o.icon = ICON_LINK;
+         el::button("", el::ButtonType::Primary, o); ImGui::SameLine();
+         o.icon = ICON_DELETE;
+         el::button("", el::ButtonType::Primary, o); ImGui::SameLine();
+         o.icon = ICON_SEARCH;
+         el::button("Search", el::ButtonType::Primary, o); ImGui::SameLine();
+         o.icon = ICON_ARROW_UP;
+         el::button("Upload", el::ButtonType::Primary, o); }},
+
+    {"Button", "Button", "Button Group", "const char* labels[] = {\"Edit\",\"Copy\",\"Delete\"};\n"
      "el::button_group(labels, 3);",
      "Several buttons drawn as one connected pill — flush shared borders, "
      "square inner corners. Returns the index of whichever one was clicked.",
-     []{ static const char* labels[] = {"Edit", "Copy", "Delete"};
-         static const el::ButtonType types[] = {el::ButtonType::Default,
+     []{ static const char* labels1[] = {"Edit", "Copy", "Delete"};
+         static const el::ButtonType types1[] = {el::ButtonType::Default,
              el::ButtonType::Default, el::ButtonType::Danger};
-         int i = el::button_group(labels, 3, types);
-         if (i >= 0) el::message(labels[i], el::NoticeType::Info); }},
+         int i = el::button_group(labels1, 3, types1);
+         if (i >= 0) el::message(labels1[i], el::NoticeType::Info);
+         ImGui::Dummy(ImVec2(0, 8));
+
+         // Icon + label group (pagination-style prev/next).
+         static const char* labels2[] = {"Previous", "Next"};
+         static el::ButtonOpts opts2[2];
+         opts2[0].icon = ICON_ARROW_BACK;
+         opts2[1].icon = ICON_ARROW_FORWARD;
+         el::button_group(labels2, 2, nullptr, opts2);
+         ImGui::SameLine(0, 16);
+
+         // Icon-only group.
+         static const char* labels3[] = {"", "", ""};
+         static el::ButtonOpts opts3[3];
+         opts3[0].icon = ICON_EDIT;
+         opts3[1].icon = ICON_LINK;
+         opts3[2].icon = ICON_DELETE;
+         el::button_group(labels3, 3, nullptr, opts3); }},
 
     // --- Form ------------------------------------------------------------
-    {"Form", "Input", "bb::input_text(\"name\", &str);",
+    {"Form", "Input", nullptr, "bb::input_text(\"name\", &str);",
      "Single-line text field bound to a std::string.",
      []{ bb::input_text("name", &g.text); }},
 
-    {"Form", "InputNumber", "double v = 3;\nel::input_number(\"count\", &v, 1.0, 0.0, 10.0);",
+    {"Form", "InputNumber", nullptr, "double v = 3;\nel::input_number(\"count\", &v, 1.0, 0.0, 10.0);",
      "A bordered field with -/+ steppers (Element's el-input-number).",
      []{ el::input_number("count", &g.input_num, 1.0, 0.0, 10.0); }},
 
-    {"Form", "Select", "const char* items[] = {\"Edit\",\"Paint\",\"Animate\"};\n"
+    {"Form", "Select", nullptr, "const char* items[] = {\"Edit\",\"Paint\",\"Animate\"};\n"
      "bb::combo(\"mode\", &current, items, 3);",
      "Dropdown selection.",
      []{ static const char* items[] = {"Edit", "Paint", "Animate", "Display"};
          bb::combo("mode", &g.combo, items, 4); }},
 
-    {"Form", "Radio / RadioGroup", "bb::radio(\"Local\", &space, 0);\n"
+    {"Form", "Radio / RadioGroup", nullptr, "bb::radio(\"Local\", &space, 0);\n"
      "bb::radio(\"Global\", &space, 1);",
      "Mutually-exclusive options sharing one int.",
      []{ bb::radio("Local", &g.radio, 0); ImGui::SameLine();
          bb::radio("Global", &g.radio, 1); }},
 
-    {"Form", "Checkbox / CheckboxGroup", "bb::checkbox(\"Visible\", &v);",
+    {"Form", "Checkbox / CheckboxGroup", nullptr, "bb::checkbox(\"Visible\", &v);",
      "Independent booleans.",
      []{ bb::checkbox("Visible", &g.check_a); bb::checkbox("Locked", &g.check_b); }},
 
-    {"Form", "Switch", "bb::toggle(\"Snap to grid\", &on);",
+    {"Form", "Switch", nullptr, "bb::toggle(\"Snap to grid\", &on);",
      "A pill on/off switch. Returns true on the frame it changed.",
      []{ bb::toggle("Snap to grid", &g.toggle_a); }},
 
-    {"Form", "Slider", "bb::slider_float(\"opacity\", &v, 0.0f, 1.0f);",
+    {"Form", "Slider", nullptr, "bb::slider_float(\"opacity\", &v, 0.0f, 1.0f);",
      "A bounded value slider.",
      []{ bb::slider_float("opacity", &g.slider, 0.0f, 1.0f); }},
 
-    {"Form", "Rate", "float v = 3;\nel::rate(\"quality\", &v);",
+    {"Form", "Rate", nullptr, "float v = 3;\nel::rate(\"quality\", &v);",
      "A row of stars; click to set the value.",
      []{ el::rate("quality", &g.rate_val); }},
 
     // --- Data --------------------------------------------------------
-    {"Data", "Table", "const char* head[] = {\"Name\",\"Type\"};\n"
+    {"Data", "Table", nullptr, "const char* head[] = {\"Name\",\"Type\"};\n"
      "const char* rows[] = {\"Cube\",\"Mesh\", \"Group\",\"Bone\"};\n"
      "el::table(\"t\", head, 2, rows, 2);",
      "A bordered, striped data table with a light grey header.",
@@ -193,7 +233,7 @@ const Entry ENTRIES[] = {
          };
          el::table("demo", head, 3, rows, 3); }},
 
-    {"Data", "Tag", "el::tag(\"Tag One\", el::TagType::Success);",
+    {"Data", "Tag", nullptr, "el::tag(\"Tag One\", el::TagType::Success);",
      "A small pill label in one of five semantic colours; `closable` adds an "
      "\"x\" the caller can react to.",
      []{ static const el::TagType types[] = {el::TagType::Default, el::TagType::Success,
@@ -209,7 +249,7 @@ const Entry ENTRIES[] = {
              if (bb::button("Reset")) for (bool& b : g.tag_closable) b = true;
          } }},
 
-    {"Data", "Progress", "bb::progress(0.72f, \"72%\");\nel::progress_circle(0.72f);",
+    {"Data", "Progress", nullptr, "bb::progress(0.72f, \"72%\");\nel::progress_circle(0.72f);",
      "Line and circle variants, both driven by a 0..1 fraction.",
      []{ static float t = 0.0f; t += ImGui::GetIO().DeltaTime * 0.1f; if (t > 1.0f) t = 0.0f;
          char b[8]; std::snprintf(b, sizeof(b), "%.0f%%", t * 100);
@@ -217,7 +257,7 @@ const Entry ENTRIES[] = {
          ImGui::Dummy(ImVec2(0, 8));
          el::progress_circle(t); }},
 
-    {"Data", "Tree", "if (el::tree_node(\"Group\")) {\n    el::tree_node(\"Cube\", /*leaf=*/true);\n    el::tree_pop();\n}",
+    {"Data", "Tree", nullptr, "if (el::tree_node(\"Group\")) {\n    el::tree_node(\"Cube\", /*leaf=*/true);\n    el::tree_pop();\n}",
      "An indented, expandable outliner-style tree. Click a row with children "
      "to toggle it.",
      []{ if (el::tree_node("Model")) {
@@ -234,23 +274,23 @@ const Entry ENTRIES[] = {
              el::tree_pop();
          } }},
 
-    {"Data", "Pagination", "int page = 3;\nel::pagination(\"p\", &page, 10);",
+    {"Data", "Pagination", nullptr, "int page = 3;\nel::pagination(\"p\", &page, 10);",
      "Prev/next arrows plus a window of nearby page numbers; the active page "
      "is accent-filled.",
      []{ el::pagination("demo", &g.pagination_page, 10); }},
 
-    {"Data", "Badge", "el::button(\"Messages\");\nel::badge(5);",
+    {"Data", "Badge", nullptr, "el::button(\"Messages\");\nel::badge(5);",
      "A numeric/dot badge anchored to the top-right corner of whatever was "
      "drawn immediately before it.",
      []{ el::button("Messages"); el::badge(5); ImGui::SameLine(0, 24);
          el::button("New"); el::badge(0, true); }},
 
-    {"Data", "Avatar", "el::avatar(\"JD\");",
+    {"Data", "Avatar", nullptr, "el::avatar(\"JD\");",
      "A circular initials avatar; colour is derived from the initials.",
      []{ el::avatar("JD"); ImGui::SameLine(0, 8); el::avatar("AB"); ImGui::SameLine(0, 8);
          el::avatar("XY"); }},
 
-    {"Data", "Card", "el::card(\"Title\", [] {\n    ImGui::TextUnformatted(\"Body content\");\n});",
+    {"Data", "Card", nullptr, "el::card(\"Title\", [] {\n    ImGui::TextUnformatted(\"Body content\");\n});",
      "A white bordered container with an optional header and rule.",
      []{ el::card("Cube", [] {
              ImGui::TextUnformatted("32 x 32 x 32");
@@ -258,7 +298,7 @@ const Entry ENTRIES[] = {
          }); }},
 
     // --- Notice --------------------------------------------------------
-    {"Notice", "Alert", "el::alert(\"Success\", el::AlertType::Success,\n"
+    {"Notice", "Alert", nullptr, "el::alert(\"Success\", el::AlertType::Success,\n"
      "          \"Model saved.\", &open);",
      "An inline banner with an icon, optional description, and an optional "
      "close button.",
@@ -267,7 +307,7 @@ const Entry ENTRIES[] = {
                        "The .bbmodel file was written to disk.", &g.alert_open);
          else if (bb::button("Reset")) g.alert_open = true; }},
 
-    {"Notice", "Loading", "el::loading_overlay(rmin, rmax, active);",
+    {"Notice", "Loading", nullptr, "el::loading_overlay(rmin, rmax, active);",
      "A semi-transparent overlay + spinner drawn over a region while "
      "`active`. Draw it right after the content it should mask.",
      []{ if (bb::button(g.loading_active ? "Stop" : "Start"))
@@ -280,7 +320,7 @@ const Entry ENTRIES[] = {
          ImGui::Dummy(ImVec2(220, 80));
          el::loading_overlay(p0, p1, g.loading_active); }},
 
-    {"Notice", "Message", "el::message(\"Saved!\", el::NoticeType::Success);",
+    {"Notice", "Message", nullptr, "el::message(\"Saved!\", el::NoticeType::Success);",
      "A transient toast, centred at the top of the screen, that fades out "
      "on its own.",
      []{ if (bb::button("Success")) el::message("This is a success message.", el::NoticeType::Success);
@@ -289,7 +329,7 @@ const Entry ENTRIES[] = {
          ImGui::SameLine();
          if (bb::button("Error")) el::message("This is an error message.", el::NoticeType::Danger); }},
 
-    {"Notice", "MessageBox", "el::MessageBoxResult r = el::message_box(\n"
+    {"Notice", "MessageBox", nullptr, "el::MessageBoxResult r = el::message_box(\n"
      "    \"confirm\", \"Confirm\", \"Delete this?\", &open);",
      "A modal dialog for confirm (OK/Cancel) or alert (OK only) flows.",
      []{ if (bb::button("Confirm box")) g.msgbox_open = true;
@@ -303,7 +343,7 @@ const Entry ENTRIES[] = {
          el::message_box("alert_demo", "Notice", "This action can't be undone.",
                          &g.msgbox_alert_open, /*show_cancel=*/false); }},
 
-    {"Notice", "Notification", "el::notify(\"Title\", \"Description text.\",\n"
+    {"Notice", "Notification", nullptr, "el::notify(\"Title\", \"Description text.\",\n"
      "          el::NoticeType::Info);",
      "A transient card in the top-right corner with a title and description.",
      []{ if (bb::button("Notify"))
@@ -311,7 +351,7 @@ const Entry ENTRIES[] = {
                        el::NoticeType::Info); }},
 
     // --- Navigation ------------------------------------------------------
-    {"Navigation", "Tabs", "const char* labels[] = {\"Detail\",\"Rules\",\"Reviews\"};\n"
+    {"Navigation", "Tabs", nullptr, "const char* labels[] = {\"Detail\",\"Rules\",\"Reviews\"};\n"
      "el::tabs(\"t\", &current, labels, 3);",
      "A row of text tabs on a baseline rule; the active tab gets an accent "
      "underline.",
@@ -320,14 +360,14 @@ const Entry ENTRIES[] = {
          ImGui::Dummy(ImVec2(0, 8));
          ImGui::TextDisabled("content for \"%s\"", labels[g.tabs_current]); }},
 
-    {"Navigation", "Breadcrumb", "const char* crumbs[] = {\"Model\",\"Group\",\"Cube\"};\n"
+    {"Navigation", "Breadcrumb", nullptr, "const char* crumbs[] = {\"Model\",\"Group\",\"Cube\"};\n"
      "el::breadcrumb(crumbs, 3);",
      "Clickable path segments with a chevron separator; the last segment is "
      "plain text.",
      []{ static const char* crumbs[] = {"Model", "Group", "Cube"};
          el::breadcrumb(crumbs, 3); }},
 
-    {"Navigation", "Steps", "const char* labels[] = {\"Upload\",\"Configure\",\"Done\"};\n"
+    {"Navigation", "Steps", nullptr, "const char* labels[] = {\"Upload\",\"Configure\",\"Done\"};\n"
      "el::steps(labels, 3, current);",
      "A horizontal progress indicator; steps before `current` are marked "
      "done with a checkmark.",
@@ -337,7 +377,7 @@ const Entry ENTRIES[] = {
          ImGui::SameLine();
          if (bb::button("Next") && g.steps_current < 2) g.steps_current++; }},
 
-    {"Navigation", "Dropdown", "const char* items[] = {\"Edit\",\"Duplicate\",\"Delete\"};\n"
+    {"Navigation", "Dropdown", nullptr, "const char* items[] = {\"Edit\",\"Duplicate\",\"Delete\"};\n"
      "int i = el::dropdown(\"d\", \"Actions\", items, 3);",
      "A button that opens a menu of items below it; returns the clicked "
      "index for one frame.",
@@ -348,7 +388,7 @@ const Entry ENTRIES[] = {
          ImGui::TextDisabled("picked: %s", g.dropdown_pick.c_str()); }},
 
     // --- Others ----------------------------------------------------------
-    {"Others", "Dialog", "el::dialog(\"d\", \"Title\", &open, [] {\n"
+    {"Others", "Dialog", nullptr, "el::dialog(\"d\", \"Title\", &open, [] {\n"
      "    ImGui::TextUnformatted(\"Body content\");\n});",
      "A modal dialog with a title bar and close button around free-form "
      "content.",
@@ -364,11 +404,11 @@ const Entry ENTRIES[] = {
              if (el::button("Confirm", el::ButtonType::Primary)) g.dialog_open = false;
          }); }},
 
-    {"Others", "Tooltip", "bb::button(\"Hover me\");\nel::tooltip(\"Helpful text\");",
+    {"Others", "Tooltip", nullptr, "bb::button(\"Hover me\");\nel::tooltip(\"Helpful text\");",
      "A small dark tooltip shown when the previous item is hovered.",
      []{ bb::button("Hover me"); el::tooltip("This is a tooltip."); }},
 
-    {"Others", "Popover", "bb::button(\"Click me\");\n"
+    {"Others", "Popover", nullptr, "bb::button(\"Click me\");\n"
      "el::popover(\"p\", [] { ImGui::TextUnformatted(\"Rich content here\"); });",
      "A white bordered popover anchored under the trigger, opened by "
      "clicking it.",
@@ -380,7 +420,7 @@ const Entry ENTRIES[] = {
              ImGui::TextDisabled("Any content can go here.");
          }); }},
 
-    {"Others", "Collapse", "if (el::collapse_item(\"Section\", &open)) {\n"
+    {"Others", "Collapse", nullptr, "if (el::collapse_item(\"Section\", &open)) {\n"
      "    ImGui::TextUnformatted(\"...\");\n    el::collapse_pop();\n}",
      "An accordion-style panel; each panel tracks its own open state.",
      []{ if (el::collapse_item("Consistency", &g.collapse_open[0])) {
@@ -394,7 +434,7 @@ const Entry ENTRIES[] = {
              el::collapse_pop();
          } }},
 
-    {"Others", "Timeline", "el::TimelineItem items[] = {\n"
+    {"Others", "Timeline", nullptr, "el::TimelineItem items[] = {\n"
      "    {\"2026-09-01\", \"Created\"},\n    {\"2026-09-03\", \"Reviewed\"},\n};\n"
      "el::timeline(items, 2);",
      "A vertical dot-and-line list of dated events.",
@@ -405,7 +445,7 @@ const Entry ENTRIES[] = {
          };
          el::timeline(items, 3); }},
 
-    {"Others", "Divider", "el::divider();\nel::divider(\"Section\");",
+    {"Others", "Divider", nullptr, "el::divider();\nel::divider(\"Section\");",
      "A horizontal rule, optionally with centred text.",
      []{ ImGui::TextUnformatted("Above"); el::divider();
          ImGui::TextUnformatted("Between"); el::divider("More");
@@ -413,7 +453,7 @@ const Entry ENTRIES[] = {
 };
 constexpr int COUNT = (int)(sizeof(ENTRIES) / sizeof(ENTRIES[0]));
 
-int g_selected = 0;
+const char* g_selected = "Button"; // selected `component`
 
 ImU32 u32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
 
@@ -424,9 +464,16 @@ void list() {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float row_h = 28.0f;
     const char* cur_group = nullptr;
+    const char* cur_component = nullptr;
 
     for (int i = 0; i < COUNT; i++) {
         const Entry& e = ENTRIES[i];
+        // Several rows can share one `component` (Button's 5 examples) —
+        // only the first one gets a nav row.
+        if (cur_component && std::strcmp(cur_component, e.component) == 0)
+            continue;
+        cur_component = e.component;
+
         if (!cur_group || std::strcmp(cur_group, e.group) != 0) {
             cur_group = e.group;
             ImGui::Dummy(ImVec2(0, i == 0 ? 0.0f : 8.0f));
@@ -444,10 +491,10 @@ void list() {
         ImGui::InvisibleButton("row", ImVec2(w, row_h));
         bool hovered = ImGui::IsItemHovered();
         if (ImGui::IsItemClicked())
-            g_selected = i;
+            g_selected = e.component;
         ImGui::PopID();
 
-        bool sel = (g_selected == i);
+        bool sel = (std::strcmp(g_selected, e.component) == 0);
         if (sel)
             dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + row_h),
                               u32(ImVec4(p.accent.x, p.accent.y, p.accent.z, 0.16f)));
@@ -457,21 +504,25 @@ void list() {
         if (sel)
             dl->AddRectFilled(pos, ImVec2(pos.x + 2, pos.y + row_h), u32(p.accent));
 
-        ImVec2 ts = ImGui::CalcTextSize(e.name);
+        ImVec2 ts = ImGui::CalcTextSize(e.component);
         dl->AddText(ImVec2(pos.x + 12, pos.y + (row_h - ts.y) * 0.5f),
-                    u32(sel ? p.light : (hovered ? p.light : p.text)), e.name);
+                    u32(sel ? p.light : (hovered ? p.light : p.text)), e.component);
     }
 }
 
-void detail() {
-    const theme::Palette& p = theme::palette();
-    if (g_selected < 0 || g_selected >= COUNT)
-        return;
-    const Entry& e = ENTRIES[g_selected];
+namespace {
 
-    ImGui::PushFont(fonts::medium(), theme::size::HEADING);
-    ImGui::TextUnformatted(e.name);
-    ImGui::PopFont();
+// One EXAMPLE/USAGE pair. Pulled out of detail() so a component page can
+// stack several of these (one per Entry sharing that component).
+void render_example(const Entry& e) {
+    const theme::Palette& p = theme::palette();
+
+    if (e.example) {
+        ImGui::PushFont(fonts::medium(), theme::size::BODY);
+        ImGui::TextUnformatted(e.example);
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0, 4));
+    }
     ImGui::PushFont(nullptr, theme::size::SMALL);
     ImGui::PushStyleColor(ImGuiCol_Text, p.subtle_text);
     ImGui::TextWrapped("%s", e.note);
@@ -488,10 +539,12 @@ void detail() {
     ImGui::PushStyleColor(ImGuiCol_Border, p.border);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme::RADIUS);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 16));
-    ImGui::BeginChild("example", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
-    ImGui::PushItemWidth(280.0f);
+    // Fixed literal IDs are fine here — the caller's PushID(i) already
+    // disambiguates across entries, and using e.example as the ID risked
+    // this and the "code" child below colliding when they share one.
+    ImGui::BeginChild("example", ImVec2(0, 0),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
     e.demo();
-    ImGui::PopItemWidth();
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(2);
@@ -513,6 +566,37 @@ void detail() {
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
+}
+
+} // namespace
+
+void detail() {
+    // The page heading is the shared `component` name; every Entry with
+    // that component is stacked below it in array order, each with its own
+    // EXAMPLE/USAGE pair (and a sub-heading, if the component has more than
+    // one example).
+    int first = -1;
+    for (int i = 0; i < COUNT; i++)
+        if (std::strcmp(ENTRIES[i].component, g_selected) == 0) { first = i; break; }
+    if (first < 0) return;
+
+    ImGui::PushFont(fonts::medium(), theme::size::HEADING);
+    ImGui::TextUnformatted(g_selected);
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, 10));
+
+    bool first_block = true;
+    for (int i = first; i < COUNT && std::strcmp(ENTRIES[i].component, g_selected) == 0; i++) {
+        if (!first_block) {
+            ImGui::Dummy(ImVec2(0, 8));
+            el::divider();
+            ImGui::Dummy(ImVec2(0, 4));
+        }
+        first_block = false;
+        ImGui::PushID(i);
+        render_example(ENTRIES[i]);
+        ImGui::PopID();
+    }
 }
 
 } // namespace gallery
