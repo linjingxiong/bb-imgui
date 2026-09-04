@@ -135,18 +135,22 @@ bool icon_button(const char* icon_glyph, bool active) {
 bool toggle(const char* label, bool* v) {
     const theme::Palette& p = pal();
     ImGui::PushID(label);
-    float h = 16.0f, w = 28.0f;
+    float h = 20.0f, w = 40.0f; // el-switch default size
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("t", ImVec2(w, h));
     bool changed = false;
     if (ImGui::IsItemClicked()) { *v = !*v; changed = true; }
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImU32 track = u32(*v ? p.accent : p.deep);
+    // Off-track uses `border`, not `deep` — in the Element palette `deep` is
+    // white (input backgrounds), which would make an off switch invisible
+    // against a white card. `border` (#DCDFE6) is Element's actual off-track
+    // colour.
+    ImU32 track = u32(*v ? p.accent : p.border);
     dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), track, h * 0.5f);
     float kx = *v ? pos.x + w - h * 0.5f : pos.x + h * 0.5f;
     dl->AddCircleFilled(ImVec2(kx, pos.y + h * 0.5f), h * 0.5f - 3.0f,
-                        u32(*v ? p.accent_text : p.light));
+                        u32(*v ? p.accent_text : ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
 
     if (label[0] != '#') {
         ImGui::SameLine(0, 8);

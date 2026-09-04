@@ -67,7 +67,8 @@ bool button(const char* label, ButtonType type, const ButtonOpts& o) {
     ImGui::PopFont();
 
     float h = o.height;
-    float w = o.circle ? h : text_w + 24.0f;
+    // Element's default-size button padding is `12px 20px`.
+    float w = o.circle ? h : text_w + 40.0f;
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImVec2 size(w, h);
     ImGui::InvisibleButton("##btn", size);
@@ -141,7 +142,7 @@ bool input_number(const char* id, double* v, double step, double min, double max
                   int decimals) {
     const theme::Palette& p = theme::palette();
     ImGui::PushID(id);
-    const float h = 32.0f, bw = 32.0f;
+    const float h = 40.0f, bw = 32.0f; // el-input-number: 40px tall, 32px steppers
     bool changed = false;
 
     ImVec2 pos = ImGui::GetCursorScreenPos();

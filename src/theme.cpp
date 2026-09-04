@@ -220,10 +220,11 @@ void apply(const Palette& p) {
     s.PopupBorderSize = 1.0f;
     s.TabBorderSize = 0.0f;
     s.WindowPadding = ImVec2(8, 8);
-    // ImGui frame height = font size + 2*FramePadding.y. BODY ≈ 21 → +9 ≈ 30
-    // (Blockbench .bar / .tool height).
-    s.FramePadding = ImVec2(8, 4);
-    s.ItemSpacing = ImVec2(8, 5);
+    // ImGui frame height = font size + 2*FramePadding.y. Default font (BODY,
+    // ~21px) + 2*10 ≈ 41px, matching Element's 40px default control height;
+    // 15px horizontal matches el-input's `padding: 0 15px`.
+    s.FramePadding = ImVec2(15, 10);
+    s.ItemSpacing = ImVec2(8, 8);
     s.ItemInnerSpacing = ImVec2(6, 4);
     s.CellPadding = ImVec2(8, 4);
     s.ScrollbarSize = 11.0f;

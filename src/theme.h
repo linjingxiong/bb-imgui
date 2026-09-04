@@ -38,7 +38,7 @@ struct Palette {
 namespace size {
 inline constexpr float CSS = 1.308f; // Assistant: unitsPerEm 1000, asc-desc 1308
 
-inline constexpr float SMALL = 13.0f * CSS;      // Blockbench .small_text ~0.84em
+inline constexpr float SMALL = 14.0f * CSS;      // Element's --el-font-size-base
 inline constexpr float BODY = 16.0f * CSS;       // Blockbench body 16px
 inline constexpr float HEADING = 18.0f * CSS;    // section headings
 inline constexpr float MONO = 14.0f * CSS;       // code

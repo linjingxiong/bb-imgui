@@ -22,7 +22,7 @@ struct ButtonOpts {
     bool disabled = false;
     bool loading = false;
     const char* icon = nullptr; // optional leading icon glyph
-    float height = 32.0f;
+    float height = 40.0f;       // Element's default size; 36/32/28 = medium/small/mini
 };
 
 // Returns true the frame it's clicked (never true if disabled/loading).
