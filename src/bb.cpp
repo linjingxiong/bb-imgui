@@ -148,8 +148,9 @@ bool toggle(const char* label, bool* v) {
     // colour.
     ImU32 track = u32(*v ? p.accent : p.border);
     dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), track, h * 0.5f);
+    const float knob_r = 8.0f; // el-switch $--switch-button-size: 16px
     float kx = *v ? pos.x + w - h * 0.5f : pos.x + h * 0.5f;
-    dl->AddCircleFilled(ImVec2(kx, pos.y + h * 0.5f), h * 0.5f - 3.0f,
+    dl->AddCircleFilled(ImVec2(kx, pos.y + h * 0.5f), knob_r,
                         u32(*v ? p.accent_text : ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
 
     if (label[0] != '#') {
