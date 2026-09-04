@@ -11,6 +11,13 @@ endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+# Static CRT: the packaged .exe should run on a machine without the VC++
+# Redistributable installed. Must be set before any targets (incl. FetchContent
+# deps built as part of this project) are created.
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
 
