@@ -18,7 +18,8 @@ namespace gallery {
 namespace {
 
 // Live-example state. Entries below are grouped to match Element UI's own
-// component taxonomy ("按 Element UI 分类分批次") — Batch 1 is Form, Batch 2 is Data.
+// component taxonomy ("按 Element UI 分类分批次") — Batch 1 is Form, Batch 2 is
+// Data, Batch 3 is Notice.
 struct State {
     bool   toggle_a = true;
     bool   check_a = true, check_b = false;
@@ -32,6 +33,11 @@ struct State {
 
     bool   tag_closable[3] = {true, true, true};
     int    pagination_page = 3;
+
+    bool   alert_open = true;
+    bool   loading_active = false;
+    bool   msgbox_open = false;
+    bool   msgbox_alert_open = false;
 };
 State g;
 
@@ -198,6 +204,59 @@ const Entry ENTRIES[] = {
              ImGui::TextUnformatted("32 x 32 x 32");
              ImGui::TextDisabled("Last edited 2m ago");
          }); }},
+
+    // --- Notice --------------------------------------------------------
+    {"Notice", "Alert", "el::alert(\"Success\", el::AlertType::Success,\n"
+     "          \"Model saved.\", &open);",
+     "An inline banner with an icon, optional description, and an optional "
+     "close button.",
+     []{ if (g.alert_open)
+             el::alert("Model saved successfully.", el::AlertType::Success,
+                       "The .bbmodel file was written to disk.", &g.alert_open);
+         else if (bb::button("Reset")) g.alert_open = true; }},
+
+    {"Notice", "Loading", "el::loading_overlay(rmin, rmax, active);",
+     "A semi-transparent overlay + spinner drawn over a region while "
+     "`active`. Draw it right after the content it should mask.",
+     []{ if (bb::button(g.loading_active ? "Stop" : "Start"))
+             g.loading_active = !g.loading_active;
+         ImGui::Dummy(ImVec2(0, 8));
+         ImVec2 p0 = ImGui::GetCursorScreenPos();
+         ImVec2 p1(p0.x + 220, p0.y + 80);
+         ImGui::GetWindowDrawList()->AddRectFilled(p0, p1,
+             ImGui::ColorConvertFloat4ToU32(theme::palette().deep), theme::RADIUS);
+         ImGui::Dummy(ImVec2(220, 80));
+         el::loading_overlay(p0, p1, g.loading_active); }},
+
+    {"Notice", "Message", "el::message(\"Saved!\", el::NoticeType::Success);",
+     "A transient toast, centred at the top of the screen, that fades out "
+     "on its own.",
+     []{ if (bb::button("Success")) el::message("This is a success message.", el::NoticeType::Success);
+         ImGui::SameLine();
+         if (bb::button("Warning")) el::message("This is a warning message.", el::NoticeType::Warning);
+         ImGui::SameLine();
+         if (bb::button("Error")) el::message("This is an error message.", el::NoticeType::Danger); }},
+
+    {"Notice", "MessageBox", "el::MessageBoxResult r = el::message_box(\n"
+     "    \"confirm\", \"Confirm\", \"Delete this?\", &open);",
+     "A modal dialog for confirm (OK/Cancel) or alert (OK only) flows.",
+     []{ if (bb::button("Confirm box")) g.msgbox_open = true;
+         auto r = el::message_box("confirm_demo", "Confirm", "This will permanently "
+             "delete the selected item. Continue?", &g.msgbox_open);
+         if (r == el::MessageBoxResult::Confirm) el::message("Deleted.", el::NoticeType::Success);
+         else if (r == el::MessageBoxResult::Cancel) el::message("Cancelled.", el::NoticeType::Info);
+
+         ImGui::SameLine();
+         if (bb::button("Alert box")) g.msgbox_alert_open = true;
+         el::message_box("alert_demo", "Notice", "This action can't be undone.",
+                         &g.msgbox_alert_open, /*show_cancel=*/false); }},
+
+    {"Notice", "Notification", "el::notify(\"Title\", \"Description text.\",\n"
+     "          el::NoticeType::Info);",
+     "A transient card in the top-right corner with a title and description.",
+     []{ if (bb::button("Notify"))
+             el::notify("New version available", "bb-imgui 0.2.0 is ready to install.",
+                       el::NoticeType::Info); }},
 };
 constexpr int COUNT = (int)(sizeof(ENTRIES) / sizeof(ENTRIES[0]));
 

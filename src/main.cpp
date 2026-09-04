@@ -11,6 +11,7 @@
 #include "imgui_impl_wgpu.h"
 
 #include "bb.h"
+#include "el.h"
 #include "fonts.h"
 #include "gallery.h"
 #include "icons.h"
@@ -434,6 +435,8 @@ int main(int, char**) {
         bb::end_panel();
 
         shell::end();
+
+        el::render_notices();
 
         ImGui::Render();
 

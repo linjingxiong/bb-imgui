@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 
 namespace el {
 namespace {
@@ -562,6 +564,181 @@ bool pagination(const char* id, int* current, int total_pages) {
     ImGui::NewLine();
     ImGui::PopID();
     return changed;
+}
+
+// ===========================================================================
+// Notice (Batch 3)
+// ===========================================================================
+namespace {
+
+struct NoticeColors { ImVec4 bg, fg, icon_bg; const char* icon; };
+const NoticeColors& notice_colors(NoticeType t) {
+    static const NoticeColors table[] = {
+        {rgb(0xf0, 0xf9, 0xeb), rgb(0x67, 0xc2, 0x3a), rgb(0x67, 0xc2, 0x3a), ICON_SUCCESS},
+        {rgb(0xfd, 0xf6, 0xec), rgb(0xe6, 0xa2, 0x3c), rgb(0xe6, 0xa2, 0x3c), ICON_WARNING},
+        {rgb(0xfe, 0xf0, 0xf0), rgb(0xf5, 0x6c, 0x6c), rgb(0xf5, 0x6c, 0x6c), ICON_ERROR},
+        {rgb(0xf4, 0xf4, 0xf5), rgb(0x90, 0x93, 0x99), rgb(0x90, 0x93, 0x99), ICON_INFO},
+    };
+    return table[(int)t];
+}
+
+struct Toast {
+    std::string title; // message: the text; notify: the bold title
+    std::string body;  // notify only; empty for message
+    NoticeType type;
+    float created;
+    float duration;
+    bool is_notify;
+};
+std::vector<Toast> g_toasts;
+
+} // namespace
+
+void message(const char* text, NoticeType type, float duration) {
+    g_toasts.push_back({text, "", type, (float)ImGui::GetTime(), duration, false});
+}
+
+void notify(const char* title, const char* description, NoticeType type, float duration) {
+    g_toasts.push_back({title, description ? description : "", type, (float)ImGui::GetTime(),
+                        duration, true});
+}
+
+void render_notices() {
+    float now = (float)ImGui::GetTime();
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+
+    float msg_y = vp->Pos.y + 24.0f;
+    float notif_y = vp->Pos.y + 24.0f;
+    const float fade = 0.3f;
+
+    for (size_t i = 0; i < g_toasts.size();) {
+        Toast& t = g_toasts[i];
+        float age = now - t.created;
+        if (age >= t.duration) { g_toasts.erase(g_toasts.begin() + i); continue; }
+        float alpha = age < fade ? age / fade
+                     : (age > t.duration - fade ? (t.duration - age) / fade : 1.0f);
+        alpha = std::clamp(alpha, 0.0f, 1.0f);
+        const NoticeColors& c = notice_colors(t.type);
+
+        if (!t.is_notify) {
+            ImGui::PushFont(nullptr, theme::size::SMALL);
+            ImVec2 ts = ImGui::CalcTextSize(t.title.c_str());
+            ImGui::PopFont();
+            float w = ts.x + 44.0f, h = 40.0f;
+            float x = vp->Pos.x + (vp->Size.x - w) * 0.5f;
+            ImVec2 p0(x, msg_y), p1(x + w, msg_y + h);
+            dl->AddRectFilled(p0, p1, u32(ImVec4(c.bg.x, c.bg.y, c.bg.z, c.bg.w * alpha)), 4.0f);
+            dl->AddRect(p0, p1, u32(ImVec4(c.fg.x, c.fg.y, c.fg.z, 0.3f * alpha)), 4.0f);
+            ImGui::PushFont(fonts::body(), 15.0f);
+            ImVec2 its = ImGui::CalcTextSize(c.icon);
+            dl->AddText(ImVec2(p0.x + 14, p0.y + (h - its.y) * 0.5f),
+                        u32(ImVec4(c.fg.x, c.fg.y, c.fg.z, alpha)), c.icon);
+            ImGui::PopFont();
+            ImGui::PushFont(nullptr, theme::size::SMALL);
+            dl->AddText(ImVec2(p0.x + 14 + its.x + 8, p0.y + (h - ts.y) * 0.5f),
+                        u32(ImVec4(c.fg.x, c.fg.y, c.fg.z, alpha)), t.title.c_str());
+            ImGui::PopFont();
+            msg_y += h + 10.0f;
+        } else {
+            float w = 300.0f;
+            ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+            ImVec2 tts = ImGui::CalcTextSize(t.title.c_str());
+            ImGui::PopFont();
+            float body_h = 0.0f;
+            if (!t.body.empty()) {
+                ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
+                body_h = ImGui::CalcTextSize(t.body.c_str(), nullptr, false, w - 60.0f).y + 6.0f;
+                ImGui::PopFont();
+            }
+            float h = 20.0f + tts.y + body_h;
+            float x = vp->Pos.x + vp->Size.x - w - 20.0f;
+            ImVec2 p0(x, notif_y), p1(x + w, notif_y + h);
+            ImVec4 bg = rgb(0xff, 0xff, 0xff);
+            dl->AddRectFilled(p0, p1, u32(ImVec4(bg.x, bg.y, bg.z, alpha)), theme::RADIUS);
+            dl->AddRect(p0, p1, u32(ImVec4(0.82f, 0.84f, 0.9f, 0.6f * alpha)), theme::RADIUS);
+            ImGui::PushFont(fonts::body(), 18.0f);
+            ImVec2 its = ImGui::CalcTextSize(c.icon);
+            dl->AddText(ImVec2(p0.x + 16, p0.y + 14),
+                        u32(ImVec4(c.fg.x, c.fg.y, c.fg.z, alpha)), c.icon);
+            ImGui::PopFont();
+            float tx = p0.x + 16 + its.x + 10;
+            ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+            dl->AddText(ImVec2(tx, p0.y + 14), u32(ImVec4(0.19f, 0.19f, 0.2f, alpha)),
+                        t.title.c_str());
+            ImGui::PopFont();
+            if (!t.body.empty()) {
+                ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
+                dl->AddText(ImVec2(tx, p0.y + 14 + tts.y + 6),
+                            u32(ImVec4(0.38f, 0.39f, 0.4f, alpha)), t.body.c_str());
+                ImGui::PopFont();
+            }
+            notif_y += h + 12.0f;
+        }
+        i++;
+    }
+}
+
+void loading_overlay(ImVec2 region_min, ImVec2 region_max, bool active) {
+    if (!active) return;
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    dl->AddRectFilled(region_min, region_max, u32(rgb(255, 255, 255, 0.85f)));
+    float radius = 14.0f;
+    ImVec2 c((region_min.x + region_max.x) * 0.5f, (region_min.y + region_max.y) * 0.5f);
+    float t = (float)ImGui::GetTime() * 6.0f;
+    int seg = 20;
+    for (int i = 0; i < seg; i++) {
+        float a0 = t + (float)i / seg * 6.2831853f;
+        float a1 = t + (float)(i + 1) / seg * 6.2831853f;
+        float alpha = (float)i / seg;
+        dl->PathArcTo(c, radius, a0, a1, 3);
+        dl->PathStroke(u32(ImVec4(0.25f, 0.62f, 1.0f, alpha)), 0, 2.5f);
+    }
+}
+
+MessageBoxResult message_box(const char* id, const char* title, const char* text,
+                             bool* open, bool show_cancel) {
+    const theme::Palette& p = theme::palette();
+    MessageBoxResult result = MessageBoxResult::None;
+    if (*open && !ImGui::IsPopupOpen(id)) ImGui::OpenPopup(id);
+
+    ImGui::SetNextWindowSize(ImVec2(320, 0));
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, theme::RADIUS);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 16));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, p.ui);
+    if (ImGui::BeginPopupModal(id, nullptr, flags)) {
+        ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+        ImGui::TextUnformatted(title);
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0, 10));
+        ImGui::PushFont(nullptr, theme::size::SMALL * 0.95f);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 280.0f);
+        ImGui::TextColored(p.text, "%s", text);
+        ImGui::PopTextWrapPos();
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0, 16));
+
+        float bw = show_cancel ? 76.0f : 88.0f;
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - (show_cancel ? bw * 2 + 28 : bw + 20));
+        if (show_cancel) {
+            if (button("Cancel", ButtonType::Default, {})) {
+                result = MessageBoxResult::Cancel;
+                *open = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine(0, 8);
+        }
+        if (button("OK", ButtonType::Primary, {})) {
+            result = MessageBoxResult::Confirm;
+            *open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    return result;
 }
 
 } // namespace el

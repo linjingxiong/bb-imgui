@@ -92,4 +92,38 @@ void tree_pop();
 // Returns true the frame it changes.
 bool pagination(const char* id, int* current, int total_pages);
 
+// ---------------------------------------------------------------------------
+// Notice (Batch 3)
+// ---------------------------------------------------------------------------
+
+enum class NoticeType { Success, Warning, Danger, Info };
+
+// Queues a transient, auto-dismissing toast centred at the top of the
+// screen (el-message). Call once per user action (e.g. inside an `if
+// (button(...))`), not every frame — each call enqueues one toast.
+void message(const char* text, NoticeType type = NoticeType::Info, float duration = 3.0f);
+
+// Queues a transient, auto-dismissing card in the top-right corner with a
+// title and optional body (el-notification). Same call convention as
+// message().
+void notify(const char* title, const char* description = nullptr,
+           NoticeType type = NoticeType::Info, float duration = 4.5f);
+
+// Draws and ages every pending message()/notify() toast. Call exactly once
+// per frame, after all other UI, so toasts draw on top of everything.
+void render_notices();
+
+// A semi-transparent overlay + spinner drawn over a screen-space rect when
+// `active` (el-loading directive). Call right after drawing the content you
+// want to mask, using its ImGui::GetItemRect{Min,Max}().
+void loading_overlay(ImVec2 region_min, ImVec2 region_max, bool active);
+
+enum class MessageBoxResult { None, Confirm, Cancel };
+// A modal confirm/alert dialog (el-message-box). `*open` is both the
+// trigger (set true to open it) and is cleared automatically once the user
+// picks a button. `show_cancel = false` gives a single-button "alert" style
+// box instead of a "confirm" style box.
+MessageBoxResult message_box(const char* id, const char* title, const char* text,
+                             bool* open, bool show_cancel = true);
+
 } // namespace el
