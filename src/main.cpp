@@ -258,16 +258,13 @@ static bool init_wgpu(GLFWwindow* window) {
         }
     }
 
-    // Present mode: default to Mailbox (low-latency, tear-free) when available,
-    // fall back to Fifo. Override with WGPU_PRESENT=fifo|mailbox|immediate.
+    // Present mode: default to Fifo (vsync, always presents a frame). Mailbox
+    // is lower-latency on a normal desktop, but on this dev machine's ToDesk
+    // remote-desktop session Mailbox silently presents nothing at all (the
+    // window stays a valid, responding, on-screen window per the OS, but no
+    // frame ever reaches the screen) — so don't auto-select it. Override with
+    // WGPU_PRESENT=fifo|mailbox|immediate.
     WGPUPresentMode present = WGPUPresentMode_Fifo;
-    auto supported = [&](WGPUPresentMode m) {
-        for (size_t i = 0; i < caps.presentModeCount; i++)
-            if (caps.presentModes[i] == m) return true;
-        return false;
-    };
-    if (supported(WGPUPresentMode_Mailbox))
-        present = WGPUPresentMode_Mailbox;
     if (const char* e = std::getenv("WGPU_PRESENT")) {
         if (std::strcmp(e, "fifo") == 0) present = WGPUPresentMode_Fifo;
         else if (std::strcmp(e, "mailbox") == 0) present = WGPUPresentMode_Mailbox;
