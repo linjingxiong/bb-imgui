@@ -369,14 +369,18 @@ int main(int, char**) {
         int page = shell::nav_active();
 
         if (bb::begin_panel("Left")) {
-            bb::field_label(pages[page]);
-            ImGui::TextDisabled("panel content");
+            if (page == NAV_GALLERY) {
+                gallery::list();
+            } else {
+                bb::field_label(pages[page]);
+                ImGui::TextDisabled("panel content");
+            }
         }
         bb::end_panel();
 
         if (bb::begin_panel("Workspace")) {
             if (page == NAV_GALLERY) {
-                gallery::draw();
+                gallery::detail();
             } else {
                 ImGui::PushFont(fonts::medium(), theme::size::HEADING);
                 ImGui::TextUnformatted("Central workspace");

@@ -1,9 +1,13 @@
-// Component gallery: every bb:: widget shown live next to its usage.
+// Component browser: a categorised list of bb:: widgets (left) and a live
+// detail view of the selected one (centre).
 #pragma once
 
 namespace gallery {
 
-// Render the gallery into the current window.
-void draw();
+// The widget-name list. Call inside the left panel.
+void list();
+
+// Heading + live demo + usage for the selected widget. Call in the workspace.
+void detail();
 
 } // namespace gallery
