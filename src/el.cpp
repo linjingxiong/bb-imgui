@@ -115,20 +115,33 @@ ButtonResult button_ex(const char* label, ButtonType type, const ButtonOpts& o,
     const SizeSpec& sz = size_for(o.size);
     float font_px = sz.font_css * theme::size::CSS;
     float icon_px = (sz.font_css + 1.0f) * theme::size::CSS;
-    ImGui::PushID(label);
+    // An empty label (icon-only buttons) can't seed a unique ID by itself —
+    // every el::button("", type, o) call would collide (ImGui's own debug
+    // ID-conflict overlay catches this: several icon-only buttons drawn
+    // side by side reported "3 visible items with conflicting ID"). Fall
+    // back to the icon glyph, which is usually different per button; a
+    // caller stacking several *same*-icon, empty-label buttons still needs
+    // its own PushID(i), same as stock ImGui would require.
+    ImGui::PushID(label[0] ? label : (o.icon ? o.icon : "##btn"));
 
     ImGui::PushFont(nullptr, font_px);
-    ImVec2 ts = ImGui::CalcTextSize(o.icon ? "" : label);
+    ImVec2 lts = ImGui::CalcTextSize(label);
+    // BUG FIXED: this used to compute `text_w` as icon-width-only whenever
+    // an icon was present, never adding the label's own width in — so an
+    // icon+label button (e.g. "Search"/"Upload") was sized as if it held
+    // only the icon, and the label was then drawn past the button's own
+    // right edge, overlapping (and looking cut off by) whatever button
+    // came next. Icon width + gap + label width, always.
+    float icon_w = 0.0f, icon_h = 0.0f;
     if (o.icon) {
         ImGui::PushFont(fonts::body(), icon_px);
         ImVec2 its = ImGui::CalcTextSize(o.icon);
         ImGui::PopFont();
-        ts.x += its.x + (label[0] ? 6.0f : 0.0f);
-        ts.y = std::max(ts.y, its.y);
+        icon_w = its.x;
+        icon_h = its.y;
     }
-    ImVec2 lts = ImGui::CalcTextSize(label);
-    float text_w = o.icon ? ts.x : lts.x;
-    float text_h = ts.y;
+    float text_w = icon_w + (o.icon && label[0] ? 6.0f : 0.0f) + lts.x;
+    float text_h = std::max(lts.y, icon_h);
     ImGui::PopFont();
 
     float h = text_h + sz.pad_v * 2.0f;
