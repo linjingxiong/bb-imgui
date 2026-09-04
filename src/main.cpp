@@ -14,6 +14,7 @@
 #include "fonts.h"
 #include "gallery.h"
 #include "icons.h"
+#include "logo.h"
 #include "menu.h"
 #include "shell.h"
 #include "theme.h"
@@ -315,6 +316,8 @@ int main(int, char**) {
     init_info.RenderTargetFormat = g_surface_config.format;
     init_info.DepthStencilFormat = WGPUTextureFormat_Undefined;
     ImGui_ImplWGPU_Init(&init_info);
+
+    logo::load(g_device, g_queue, 19.0f); // Blockbench wordmark for the title bar
 
     const ImVec4 clear = ImVec4(0.157f, 0.173f, 0.204f, 1.0f); // Blockbench "ui"
 

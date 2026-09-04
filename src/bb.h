@@ -7,8 +7,8 @@
 
 namespace bb {
 
-inline constexpr float PANEL_HEADER_H = 30.0f;
-inline constexpr float ROW_H = 30.0f;
+inline constexpr float PANEL_HEADER_H = 32.0f; // Blockbench #center h3.panel_handle
+inline constexpr float ROW_H = 30.0f;          // Blockbench .bar
 
 // --- panel chrome --------------------------------------------------------
 void panel_header(const char* title);

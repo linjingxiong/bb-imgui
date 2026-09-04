@@ -1,6 +1,7 @@
 #include "shell.h"
 
 #include "fonts.h"
+#include "logo.h"
 #include "theme.h"
 
 #include "imgui_internal.h" // DockBuilder / DockBuilderGetNode
@@ -47,11 +48,13 @@ void toggle_maximize(GLFWwindow* w) {
         glfwMaximizeWindow(w);
 }
 
-// A hand-drawn window-control button (46 x TITLEBAR_H). `kind`: 0 min, 1 max,
-// 2 restore, 3 close.
+inline constexpr float WBTN_W = 42.0f; // Blockbench #windows_window_menu li width
+
+// A hand-drawn window-control button, Windows-style glyphs on a 16px grid.
+// `kind`: 0 min, 1 maximize, 2 restore, 3 close.
 bool window_button(const char* id, int kind, GLFWwindow* win) {
     const theme::Palette& p = theme::palette();
-    ImVec2 size(46.0f, TITLEBAR_H);
+    ImVec2 size(WBTN_W, TITLEBAR_H);
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton(id, size);
     bool hovered = ImGui::IsItemHovered();
@@ -59,29 +62,28 @@ bool window_button(const char* id, int kind, GLFWwindow* win) {
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (hovered) {
-        ImU32 bg = kind == 3 ? IM_COL32(232, 68, 68, 255) : u32(p.selected);
+        ImU32 bg = kind == 3 ? IM_COL32(232, 63, 66, 255) : u32(p.selected);
         dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), bg);
     }
-    ImU32 fg = u32(hovered ? p.light : p.subtle_text);
+    ImU32 fg = u32(hovered ? (kind == 3 ? p.light : p.light) : p.text);
     ImVec2 c(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
-    const float r = 5.0f;
+    const float r = 5.0f; // half-extent of a ~10px glyph
     switch (kind) {
-        case 0: // minimize
-            dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), fg, 1.0f);
+        case 0: // minimize — a thin horizontal bar
+            dl->AddLine(ImVec2(c.x - r, c.y + 0.5f), ImVec2(c.x + r, c.y + 0.5f), fg, 1.0f);
             break;
-        case 1: // maximize
-            dl->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fg, 0.0f, 0,
-                        1.0f);
+        case 1: // maximize — hollow square
+            dl->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fg, 0.0f, 0, 1.0f);
             break;
-        case 2: // restore
-            dl->AddRect(ImVec2(c.x - r + 2, c.y - r), ImVec2(c.x + r, c.y + r - 2), fg,
-                        0.0f, 0, 1.0f);
-            dl->AddRect(ImVec2(c.x - r, c.y - r + 2), ImVec2(c.x + r - 2, c.y + r), fg,
-                        0.0f, 0, 1.0f);
+        case 2: // restore — two offset squares
+            dl->AddRect(ImVec2(c.x - r + 2, c.y - r), ImVec2(c.x + r, c.y + r - 2), fg, 0, 0, 1.0f);
+            dl->AddRectFilled(ImVec2(c.x - r, c.y - r + 2), ImVec2(c.x + r - 2, c.y + r),
+                              hovered ? u32(p.selected) : u32(p.frame));
+            dl->AddRect(ImVec2(c.x - r, c.y - r + 2), ImVec2(c.x + r - 2, c.y + r), fg, 0, 0, 1.0f);
             break;
-        case 3: // close
-            dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fg, 1.2f);
-            dl->AddLine(ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y - r), fg, 1.2f);
+        case 3: // close — a thin X
+            dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fg, 1.1f);
+            dl->AddLine(ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y - r), fg, 1.1f);
             break;
     }
     (void)win;
@@ -95,29 +97,36 @@ void titlebar(GLFWwindow* win) {
 
     ImVec2 tl = vp->Pos;
     ImVec2 br = ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + TITLEBAR_H);
-    dl->AddRectFilled(tl, br, u32(p.back));
-    dl->AddLine(ImVec2(tl.x, br.y - 0.5f), ImVec2(br.x, br.y - 0.5f), u32(p.border), 1.0f);
+    dl->AddRectFilled(tl, br, u32(p.frame)); // Blockbench header uses --color-frame
 
     ImGui::SetCursorScreenPos(ImVec2(tl.x, tl.y));
 
-    // --- left: wordmark + menu points -------------------------------------
+    // --- left: Blockbench wordmark + menu points --------------------------
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 0));
 
-    ImGui::PushFont(fonts::medium(), theme::size::MENU_POINT);
-    ImGui::PushStyleColor(ImGuiCol_Text, p.light);
-    ImGui::AlignTextToFramePadding();
-    ImGui::SetCursorScreenPos(ImVec2(tl.x + 12, tl.y + (TITLEBAR_H - ImGui::GetFontSize()) * 0.5f));
-    ImGui::TextUnformatted("Blockbench");
-    ImGui::PopStyleColor();
-    ImGui::PopFont();
+    float wordmark_w = 0.0f;
+    if (logo::texture()) {
+        ImVec2 ps = logo::pixel_size();
+        float draw_h = TITLEBAR_H - 8.0f;              // ~18px in the 26px bar
+        wordmark_w = ps.x * (draw_h / ps.y);
+        dl->AddImage(logo::texture(), ImVec2(tl.x + 10, tl.y + 4),
+                     ImVec2(tl.x + 10 + wordmark_w, tl.y + 4 + draw_h));
+    } else {
+        ImGui::PushFont(fonts::medium(), theme::size::WORDMARK);
+        ImVec2 ts = ImGui::CalcTextSize("Blockbench");
+        dl->AddText(ImVec2(tl.x + 12, tl.y + (TITLEBAR_H - ts.y) * 0.5f), u32(p.light),
+                    "Blockbench");
+        wordmark_w = ts.x;
+        ImGui::PopFont();
+    }
 
-    float x = tl.x + 12 + ImGui::CalcTextSize("Blockbench").x + 18;
+    float x = tl.x + 12 + wordmark_w + 16;
     g_menu_clicked = nullptr;
     ImGui::PushFont(nullptr, theme::size::MENU_POINT);
     for (int i = 0; i < g_menu_count; i++) {
         const menu::Menu& m = g_menus[i];
-        float bw = ImGui::CalcTextSize(m.name).x + 22;
+        float bw = ImMax(ImGui::CalcTextSize(m.name).x + 16.0f, 42.0f); // BB: pad 8, min-w 42
         if (const char* hit = menu::point(m, i, ImVec2(x, tl.y), ImVec2(bw, TITLEBAR_H)))
             g_menu_clicked = hit;
         x += bw;
@@ -126,14 +135,14 @@ void titlebar(GLFWwindow* win) {
     ImGui::PopStyleVar(2);
 
     // --- right: window controls -----------------------------------------
-    float bx = br.x - 46 * 3;
+    float bx = br.x - WBTN_W * 3;
     ImGui::SetCursorScreenPos(ImVec2(bx, tl.y));
     if (window_button("##min", 0, win))
         glfwIconifyWindow(win);
-    ImGui::SetCursorScreenPos(ImVec2(bx + 46, tl.y));
+    ImGui::SetCursorScreenPos(ImVec2(bx + WBTN_W, tl.y));
     if (window_button("##max", is_maximized(win) ? 2 : 1, win))
         toggle_maximize(win);
-    ImGui::SetCursorScreenPos(ImVec2(bx + 92, tl.y));
+    ImGui::SetCursorScreenPos(ImVec2(bx + WBTN_W * 2, tl.y));
     if (window_button("##close", 3, win))
         glfwSetWindowShouldClose(win, GLFW_TRUE);
 

@@ -7,6 +7,7 @@
 
 #include "imgui.h"
 
+#include <cctype>
 #include <functional>
 #include <string>
 
@@ -31,12 +32,20 @@ struct State {
 State g;
 
 void section(const char* title) {
-    ImGui::Dummy(ImVec2(0, 6));
-    ImGui::PushFont(fonts::medium(), theme::size::HEADING);
-    ImGui::TextColored(theme::palette().light, "%s", title);
+    const theme::Palette& p = theme::palette();
+    ImGui::Dummy(ImVec2(0, 5));
+    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+    std::string up(title);
+    for (char& c : up) c = (char)toupper((unsigned char)c);
+    ImGui::TextColored(p.subtle_text, "%s", up.c_str());
     ImGui::PopFont();
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 2));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 mx = ImGui::GetItemRectMax();
+    float cy = (ImGui::GetItemRectMin().y + mx.y) * 0.5f;
+    float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    dl->AddLine(ImVec2(mx.x + 8, cy), ImVec2(right, cy),
+                ImGui::ColorConvertFloat4ToU32(p.border), 1.0f);
+    ImGui::Dummy(ImVec2(0, 1));
 }
 
 // One row: live widget (left) + usage snippet (right).
@@ -66,15 +75,15 @@ void sect(const char* title) {
 } // namespace
 
 void draw() {
-    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(10, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6, 5));
     if (!ImGui::BeginTable("gallery", 2,
-                           ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp |
-                               ImGuiTableFlags_PadOuterX)) {
-        ImGui::PopStyleVar();
+                           ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
+        ImGui::PopStyleVar(2);
         return;
     }
-    ImGui::TableSetupColumn("widget", ImGuiTableColumnFlags_WidthStretch, 0.45f);
-    ImGui::TableSetupColumn("usage", ImGuiTableColumnFlags_WidthStretch, 0.55f);
+    ImGui::TableSetupColumn("widget", ImGuiTableColumnFlags_WidthStretch, 0.42f);
+    ImGui::TableSetupColumn("usage", ImGuiTableColumnFlags_WidthStretch, 0.58f);
 
     // -- Buttons --------------------------------------------------------
     sect("Buttons");
@@ -142,7 +151,7 @@ void draw() {
              } });
 
     ImGui::EndTable();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
 }
 
 } // namespace gallery

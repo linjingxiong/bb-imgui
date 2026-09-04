@@ -185,7 +185,7 @@ void apply(const Palette& p) {
     s.WindowRounding = 0.0f;
     s.ChildRounding = RADIUS;
     s.FrameRounding = RADIUS;
-    s.PopupRounding = 8.0f;
+    s.PopupRounding = 6.0f;
     s.ScrollbarRounding = RADIUS;
     s.GrabRounding = RADIUS;
     s.TabRounding = RADIUS;
@@ -194,12 +194,13 @@ void apply(const Palette& p) {
     s.FrameBorderSize = 1.0f;
     s.PopupBorderSize = 1.0f;
     s.TabBorderSize = 0.0f;
-    s.WindowPadding = ImVec2(10, 10);
-    s.FramePadding = ImVec2(8, 4);
-    s.ItemSpacing = ImVec2(8, 6);
+    s.WindowPadding = ImVec2(8, 8);
+    s.FramePadding = ImVec2(8, 7); // frame height = font(15) + 14 ≈ 30 (Blockbench .bar)
+    s.ItemSpacing = ImVec2(8, 5);
     s.ItemInnerSpacing = ImVec2(6, 4);
-    s.ScrollbarSize = 12.0f;
-    s.GrabMinSize = 10.0f;
+    s.CellPadding = ImVec2(8, 4);
+    s.ScrollbarSize = 11.0f;
+    s.GrabMinSize = 9.0f;
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.SeparatorTextBorderSize = 1.0f;
     s.DockingSeparatorSize = 2.0f;

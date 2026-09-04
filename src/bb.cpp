@@ -112,7 +112,7 @@ bool primary_button(const char* label, ImVec2 size) {
 
 bool icon_button(const char* icon_glyph, bool active) {
     const theme::Palette& p = pal();
-    ImVec2 size(34, 28);
+    ImVec2 size(30, 28);
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton(icon_glyph, size);
     bool hovered = ImGui::IsItemHovered();
@@ -124,7 +124,7 @@ bool icon_button(const char* icon_glyph, bool active) {
                           theme::RADIUS);
     if (active)
         dl->AddRectFilled(ImVec2(pos.x + 6, br.y - 2), ImVec2(br.x - 6, br.y), u32(p.accent));
-    ImGui::PushFont(fonts::body(), 18.0f);
+    ImGui::PushFont(fonts::body(), 17.0f);
     ImVec2 ts = ImGui::CalcTextSize(icon_glyph);
     dl->AddText(ImVec2(pos.x + (size.x - ts.x) * 0.5f, pos.y + (size.y - ts.y) * 0.5f),
                 u32(active ? p.accent : (hovered ? p.light : p.text)), icon_glyph);
@@ -135,7 +135,7 @@ bool icon_button(const char* icon_glyph, bool active) {
 bool toggle(const char* label, bool* v) {
     const theme::Palette& p = pal();
     ImGui::PushID(label);
-    float h = 20.0f, w = 36.0f;
+    float h = 16.0f, w = 28.0f;
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("t", ImVec2(w, h));
     bool changed = false;
@@ -168,7 +168,7 @@ bool num_slider(const char* id, double* v, const NumOpts& o) {
     bool editing = st->GetBool(edit_id, false);
 
     float w = o.width > 0 ? o.width : ImGui::GetContentRegionAvail().x;
-    float h = 26.0f;
+    float h = 30.0f;
     ImVec2 pos = ImGui::GetCursorScreenPos();
     bool changed = false;
 
@@ -287,7 +287,7 @@ bool segmented(const char* id, int* current, const char* const labels[], int cou
     bool changed = false;
     float w = ImGui::GetContentRegionAvail().x;
     float cw = w / count;
-    float h = 28.0f;
+    float h = 30.0f;
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
 

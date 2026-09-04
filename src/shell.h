@@ -10,7 +10,7 @@ struct GLFWwindow;
 
 namespace shell {
 
-inline constexpr float TITLEBAR_H = 30.0f;
+inline constexpr float TITLEBAR_H = 26.0f; // Blockbench header height
 inline constexpr float RAIL_W = 48.0f;
 inline constexpr float STATUS_H = 26.0f;
 

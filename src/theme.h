@@ -29,17 +29,19 @@ struct Palette {
     bool   is_dark = true;
 };
 
-// Font sizes, in points (tuned for Assistant).
+// Font sizes, in points. Blockbench uses 16px Assistant (a compact face);
+// these are tuned to match that visual weight.
 namespace size {
-inline constexpr float SMALL = 12.0f;
+inline constexpr float SMALL = 13.0f;
 inline constexpr float BODY = 15.0f;
 inline constexpr float HEADING = 17.0f;
-inline constexpr float MONO = 14.0f;
-inline constexpr float MENU_POINT = 17.0f; // "File", "Edit", …
-inline constexpr float MENU_ITEM = 16.0f;  // rows inside a dropdown
+inline constexpr float MONO = 13.0f;
+inline constexpr float MENU_POINT = 17.0f; // Blockbench li.menu_bar_point font-size
+inline constexpr float MENU_ITEM = 14.0f;  // rows inside a dropdown
+inline constexpr float WORDMARK = 19.0f;   // Blockbench #corner_logo font-size (1.2em)
 } // namespace size
 
-inline constexpr float RADIUS = 5.0f;
+inline constexpr float RADIUS = 4.0f;
 
 // Load a palette. Resolution order:
 //   1. $APP_THEME (path to a .bbtheme)
