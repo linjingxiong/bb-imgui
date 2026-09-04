@@ -134,10 +134,10 @@ const char* point(const Menu& m, int index, ImVec2 pos, ImVec2 size) {
         dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
                           u32(active ? p.accent : p.ui));
 
-    ImGui::PushFont(nullptr, theme::size::MENU_POINT);
+    ImGui::PushFont(nullptr, theme::size::MENU_POINT); // Blockbench: Regular weight
     ImVec2 ts = ImGui::CalcTextSize(m.name);
     dl->AddText(ImVec2(pos.x + (size.x - ts.x) * 0.5f, pos.y + (size.y - ts.y) * 0.5f),
-                u32(active ? p.accent_text : (hovered ? p.light : p.text)), m.name);
+                u32(active ? p.accent_text : p.text), m.name);
     ImGui::PopFont();
 
     const char* result = nullptr;

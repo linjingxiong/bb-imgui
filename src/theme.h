@@ -29,16 +29,22 @@ struct Palette {
     bool   is_dark = true;
 };
 
-// Font sizes, in points. Blockbench uses 16px Assistant (a compact face);
-// these are tuned to match that visual weight.
+// Font sizes.
+//
+// CSS `font-size` maps the font's em square (1000 units for Assistant) to N px.
+// ImGui's `size_pixels` maps the ascent-to-descent height (1308 units for
+// Assistant) to N px. So a CSS `17px` equals an ImGui size of 17 * 1308/1000.
+// These constants are Blockbench's CSS px, pre-multiplied by that factor.
 namespace size {
-inline constexpr float SMALL = 13.0f;
-inline constexpr float BODY = 15.0f;
-inline constexpr float HEADING = 17.0f;
-inline constexpr float MONO = 13.0f;
-inline constexpr float MENU_POINT = 17.0f; // Blockbench li.menu_bar_point font-size
-inline constexpr float MENU_ITEM = 14.0f;  // rows inside a dropdown
-inline constexpr float WORDMARK = 19.0f;   // Blockbench #corner_logo font-size (1.2em)
+inline constexpr float CSS = 1.308f; // Assistant: unitsPerEm 1000, asc-desc 1308
+
+inline constexpr float SMALL = 13.0f * CSS;      // Blockbench .small_text ~0.84em
+inline constexpr float BODY = 16.0f * CSS;       // Blockbench body 16px
+inline constexpr float HEADING = 18.0f * CSS;    // section headings
+inline constexpr float MONO = 14.0f * CSS;       // code
+inline constexpr float MENU_POINT = 17.0f * CSS; // Blockbench li.menu_bar_point
+inline constexpr float MENU_ITEM = 16.0f * CSS;  // Blockbench .contextMenu (inherits 16px)
+inline constexpr float WORDMARK = 19.0f * CSS;   // Blockbench #corner_logo (1.2em)
 } // namespace size
 
 inline constexpr float RADIUS = 4.0f;

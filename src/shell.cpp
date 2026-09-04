@@ -65,22 +65,24 @@ bool window_button(const char* id, int kind, GLFWwindow* win) {
         ImU32 bg = kind == 3 ? IM_COL32(232, 63, 66, 255) : u32(p.selected);
         dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), bg);
     }
-    ImU32 fg = u32(hovered ? (kind == 3 ? p.light : p.light) : p.text);
+    ImU32 fg = u32(hovered ? p.light : p.text);
     ImVec2 c(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
-    const float r = 5.0f; // half-extent of a ~10px glyph
+    const float r = 5.5f; // half-extent of an ~11px glyph (BB's is 16px viewBox)
     switch (kind) {
         case 0: // minimize — a thin horizontal bar
-            dl->AddLine(ImVec2(c.x - r, c.y + 0.5f), ImVec2(c.x + r, c.y + 0.5f), fg, 1.0f);
+            dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), fg, 1.0f);
             break;
         case 1: // maximize — hollow square
             dl->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fg, 0.0f, 0, 1.0f);
             break;
-        case 2: // restore — two offset squares
-            dl->AddRect(ImVec2(c.x - r + 2, c.y - r), ImVec2(c.x + r, c.y + r - 2), fg, 0, 0, 1.0f);
-            dl->AddRectFilled(ImVec2(c.x - r, c.y - r + 2), ImVec2(c.x + r - 2, c.y + r),
+        case 2: { // restore — two offset squares
+            float d = 2.5f;
+            dl->AddRect(ImVec2(c.x - r + d, c.y - r), ImVec2(c.x + r, c.y + r - d), fg, 0, 0, 1.0f);
+            dl->AddRectFilled(ImVec2(c.x - r, c.y - r + d), ImVec2(c.x + r - d, c.y + r),
                               hovered ? u32(p.selected) : u32(p.frame));
-            dl->AddRect(ImVec2(c.x - r, c.y - r + 2), ImVec2(c.x + r - 2, c.y + r), fg, 0, 0, 1.0f);
+            dl->AddRect(ImVec2(c.x - r, c.y - r + d), ImVec2(c.x + r - d, c.y + r), fg, 0, 0, 1.0f);
             break;
+        }
         case 3: // close — a thin X
             dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fg, 1.1f);
             dl->AddLine(ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y - r), fg, 1.1f);
@@ -122,7 +124,7 @@ void titlebar(GLFWwindow* win) {
         ImGui::PopFont();
     }
 
-    float x = tl.x + 10 + wordmark_w + 22;
+    float x = tl.x + 10 + wordmark_w + 16;
     g_menu_clicked = nullptr;
     ImGui::PushFont(nullptr, theme::size::MENU_POINT);
     for (int i = 0; i < g_menu_count; i++) {
