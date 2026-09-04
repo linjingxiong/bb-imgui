@@ -10,6 +10,10 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_wgpu.h"
 
+#include "fonts.h"
+#include "shell.h"
+#include "theme.h"
+
 #include <cstdio>
 #include <cstdlib>
 
@@ -34,6 +38,8 @@ void glfw_error_callback(int error, const char* description) {
 }
 
 void resize_surface(int w, int h) {
+    if (w <= 0 || h <= 0)
+        return; // wgpu rejects a zero-area surface (minimised window)
     g_surface_config.width = g_surface_w = w;
     g_surface_config.height = g_surface_h = h;
     wgpuSurfaceConfigure(g_surface, &g_surface_config);
@@ -153,8 +159,19 @@ static bool init_wgpu(GLFWwindow* window) {
     WGPUSurfaceCapabilities caps = {};
     wgpuSurfaceGetCapabilities(g_surface, adapter, &caps);
 
+    // ImGui works in gamma space — prefer a non-sRGB surface format so colours
+    // are presented as authored.
+    WGPUTextureFormat fmt = caps.formats[0];
+    for (size_t i = 0; i < caps.formatCount; i++) {
+        if (caps.formats[i] == WGPUTextureFormat_BGRA8Unorm ||
+            caps.formats[i] == WGPUTextureFormat_RGBA8Unorm) {
+            fmt = caps.formats[i];
+            break;
+        }
+    }
+
     g_surface_config.device = g_device;
-    g_surface_config.format = caps.formats[0];
+    g_surface_config.format = fmt;
     g_surface_config.usage = WGPUTextureUsage_RenderAttachment;
     g_surface_config.presentMode = WGPUPresentMode_Fifo;
     g_surface_config.alphaMode = WGPUCompositeAlphaMode_Auto;
@@ -192,9 +209,11 @@ int main(int, char**) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.IniFilename = nullptr; // TODO(phase 2): persist layout
+    io.ConfigWindowsMoveFromTitleBarOnly = true;
+    io.IniFilename = nullptr; // TODO: persist layout under a real path
 
-    ImGui::StyleColorsDark();
+    theme::apply(theme::load());
+    fonts::install(1.0f);
 
     ImGui_ImplGlfw_InitForOther(window, true);
     ImGui_ImplWGPU_InitInfo init_info;
@@ -208,13 +227,13 @@ int main(int, char**) {
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-        if (glfwGetWindowAttrib(window, GLFW_ICONIFIED)) {
-            ImGui_ImplGlfw_Sleep(10);
-            continue;
-        }
 
         int w, h;
         glfwGetFramebufferSize(window, &w, &h);
+        if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) || w <= 0 || h <= 0) {
+            ImGui_ImplGlfw_Sleep(10);
+            continue;
+        }
         if (w != g_surface_w || h != g_surface_h)
             resize_surface(w, h);
 
@@ -236,26 +255,7 @@ int main(int, char**) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        const ImGuiID dockspace_id =
-            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-
-        static bool layout_done = false;
-        if (!layout_done) {
-            layout_done = true;
-            ImGui::DockBuilderRemoveNode(dockspace_id);
-            ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
-            ImGui::DockBuilderSetNodeSize(dockspace_id,
-                                          ImGui::GetMainViewport()->WorkSize);
-            ImGuiID center = dockspace_id;
-            ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.22f,
-                                                       nullptr, &center);
-            ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f,
-                                                        nullptr, &center);
-            ImGui::DockBuilderDockWindow("Left", left);
-            ImGui::DockBuilderDockWindow("Right", right);
-            ImGui::DockBuilderDockWindow("Workspace", center);
-            ImGui::DockBuilderFinish(dockspace_id);
-        }
+        shell::begin(window);
 
         ImGui::Begin("Left");
         ImGui::TextUnformatted("nav / outliner (phase 2)");
@@ -265,11 +265,16 @@ int main(int, char**) {
         ImGui::TextUnformatted("central workspace");
         ImGui::Separator();
         ImGui::Text("%.1f FPS", (double)io.Framerate);
+        ImGui::PushFont(fonts::medium(), theme::size::HEADING);
+        ImGui::TextUnformatted("Assistant SemiBold heading");
+        ImGui::PopFont();
         ImGui::End();
 
         ImGui::Begin("Right");
         ImGui::TextUnformatted("inspector (phase 2)");
         ImGui::End();
+
+        shell::end();
 
         ImGui::Render();
 
