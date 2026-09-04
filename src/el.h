@@ -43,6 +43,12 @@ bool button(const char* label, ButtonType type = ButtonType::Default,
 int button_group(const char* const* labels, int count, const ButtonType* types = nullptr,
                  const ButtonOpts* opts = nullptr);
 
+// A 14x14px checkbox (Element's fixed size — deliberately independent of
+// the global ImGuiStyle::FramePadding used to size Button/Input to 40px,
+// which would otherwise blow this up to match). Returns true the frame it
+// changes.
+bool checkbox(const char* label, bool* v, bool disabled = false);
+
 // A bordered number field with - / + steppers (Element's el-input-number).
 bool input_number(const char* id, double* v, double step = 1.0, double min = 0.0,
                   double max = 0.0, int decimals = 0);

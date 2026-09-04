@@ -23,6 +23,7 @@ namespace {
 struct State {
     bool   toggle_a = true;
     bool   check_a = true, check_b = false;
+    bool   check_disabled_off = false, check_disabled_on = true;
     int    radio = 1;
     int    combo = 2;
     float  slider = 0.4f;
@@ -204,9 +205,16 @@ const Entry ENTRIES[] = {
      []{ bb::radio("Local", &g.radio, 0); ImGui::SameLine();
          bb::radio("Global", &g.radio, 1); }},
 
-    {"Form", "Checkbox / CheckboxGroup", nullptr, "bb::checkbox(\"Visible\", &v);",
-     "Independent booleans.",
-     []{ bb::checkbox("Visible", &g.check_a); bb::checkbox("Locked", &g.check_b); }},
+    {"Form", "Checkbox", "Basic usage", "el::checkbox(\"Option\", &v);",
+     "Used alone, to represent a switch between two states. The content in "
+     "the label describes the checkbox's purpose.",
+     []{ el::checkbox("Visible", &g.check_a); ImGui::SameLine(0, 16);
+         el::checkbox("Locked", &g.check_b); }},
+
+    {"Form", "Checkbox", "Disabled", "el::checkbox(\"Option\", &v, /*disabled=*/true);",
+     "The checkbox is disabled.",
+     []{ el::checkbox("Option 1", &g.check_disabled_off, true); ImGui::SameLine(0, 16);
+         el::checkbox("Option", &g.check_disabled_on, true); }},
 
     {"Form", "Switch", nullptr, "bb::toggle(\"Snap to grid\", &on);",
      "A pill on/off switch. Returns true on the frame it changed.",

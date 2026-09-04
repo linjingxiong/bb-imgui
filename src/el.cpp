@@ -251,6 +251,61 @@ int button_group(const char* const* labels, int count, const ButtonType* types,
     return clicked;
 }
 
+bool checkbox(const char* label, bool* v, bool disabled) {
+    ImGui::PushID(label);
+    const float box = 14.0f; // $--checkbox-input-{height,width}
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    ImVec2 lts = ImGui::CalcTextSize(label);
+    float row_h = std::max(box, lts.y);
+    ImVec2 full_size(box + (label[0] ? 6.0f + lts.x : 0.0f), row_h);
+    ImGui::InvisibleButton("cb", full_size);
+    bool hovered = !disabled && ImGui::IsItemHovered();
+    bool clicked = !disabled && ImGui::IsItemClicked();
+    if (clicked) *v = !*v;
+
+    ImVec2 box_pos(pos.x, pos.y + (row_h - box) * 0.5f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // Colours straight from theme-chalk's checkbox.scss + var.scss.
+    ImVec4 bg, border, mark;
+    if (disabled) {
+        bg = *v ? rgb(0xf2, 0xf6, 0xfc) : rgb(0xed, 0xf2, 0xfc);
+        border = rgb(0xdc, 0xdf, 0xe6);
+        mark = rgb(0xc0, 0xc4, 0xcc);
+    } else if (*v) {
+        bg = rgb(0x40, 0x9e, 0xff);
+        border = rgb(0x40, 0x9e, 0xff);
+        mark = rgb(0xff, 0xff, 0xff);
+    } else {
+        bg = rgb(0xff, 0xff, 0xff);
+        border = hovered ? rgb(0x40, 0x9e, 0xff) : rgb(0xdc, 0xdf, 0xe6);
+        mark = ImVec4(0, 0, 0, 0);
+    }
+    dl->AddRectFilled(box_pos, ImVec2(box_pos.x + box, box_pos.y + box), u32(bg), 2.0f);
+    dl->AddRect(box_pos, ImVec2(box_pos.x + box, box_pos.y + box), u32(border), 2.0f);
+    if (*v) {
+        // A short tick: down-stroke then up-stroke, matching Element's
+        // ::after rotate(45deg) checkmark.
+        ImVec2 p1(box_pos.x + box * 0.28f, box_pos.y + box * 0.53f);
+        ImVec2 p2(box_pos.x + box * 0.42f, box_pos.y + box * 0.72f);
+        ImVec2 p3(box_pos.x + box * 0.76f, box_pos.y + box * 0.28f);
+        dl->AddLine(p1, p2, u32(mark), 1.4f);
+        dl->AddLine(p2, p3, u32(mark), 1.4f);
+    }
+
+    if (label[0]) {
+        ImVec4 text_col = disabled ? rgb(0xc0, 0xc4, 0xcc)
+                         : (*v ? rgb(0x40, 0x9e, 0xff) : rgb(0x60, 0x62, 0x66));
+        dl->AddText(ImVec2(pos.x + box + 6.0f, pos.y + (row_h - lts.y) * 0.5f), u32(text_col),
+                    label);
+    }
+    ImGui::PopFont();
+    ImGui::PopID();
+    return clicked;
+}
+
 bool input_number(const char* id, double* v, double step, double min, double max,
                   int decimals) {
     const theme::Palette& p = theme::palette();
