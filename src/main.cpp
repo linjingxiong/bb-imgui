@@ -12,6 +12,7 @@
 
 #include "bb.h"
 #include "fonts.h"
+#include "gallery.h"
 #include "icons.h"
 #include "menu.h"
 #include "shell.h"
@@ -19,6 +20,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include <GLFW/glfw3.h>
 #include <webgpu/webgpu.h>
@@ -298,10 +300,11 @@ int main(int, char**) {
     fonts::install(1.0f);
 
     static const shell::NavItem nav[] = {
-        {ICON_GRID, "UV"},        {ICON_IMAGE, "Textures"},
-        {ICON_PALETTE, "Palette"}, {ICON_PHOTO_LIBRARY, "Reference"},
-        {ICON_SETTINGS, "Settings"},
+        {ICON_GRID, "UV"},          {ICON_IMAGE, "Textures"},
+        {ICON_PALETTE, "Palette"},  {ICON_PHOTO_LIBRARY, "Reference"},
+        {ICON_TUNE, "Components"},  {ICON_SETTINGS, "Settings"},
     };
+    const int NAV_GALLERY = 4;
     shell::set_nav(nav, (int)(sizeof(nav) / sizeof(nav[0])));
     shell::set_menus(MENUS, (int)(sizeof(MENUS) / sizeof(MENUS[0])));
 
@@ -352,25 +355,35 @@ int main(int, char**) {
         shell::begin(window);
 
         static const char* last_action = "(none)";
-        if (const char* a = shell::menu_clicked())
+        if (const char* a = shell::menu_clicked()) {
             last_action = a;
+            if (std::strstr(a, "Component gallery"))
+                shell::set_nav_active(NAV_GALLERY);
+        }
 
-        const char* pages[] = {"UV", "Textures", "Palette", "Reference", "Settings"};
+        const char* pages[] = {"UV",         "Textures", "Palette",
+                               "Reference",  "Components", "Settings"};
         int page = shell::nav_active();
 
         if (bb::begin_panel("Left")) {
-            ImGui::TextUnformatted(pages[page]);
-            ImGui::TextDisabled("panel content — phase 4");
+            bb::field_label(pages[page]);
+            ImGui::TextDisabled("panel content");
         }
         bb::end_panel();
 
         if (bb::begin_panel("Workspace")) {
-            ImGui::PushFont(fonts::medium(), theme::size::HEADING);
-            ImGui::TextUnformatted("Central workspace");
-            ImGui::PopFont();
-            ImGui::TextDisabled("%.1f FPS", (double)io.Framerate);
-            ImGui::Spacing();
-            ImGui::Text("last menu action: %s", last_action);
+            if (page == NAV_GALLERY) {
+                gallery::draw();
+            } else {
+                ImGui::PushFont(fonts::medium(), theme::size::HEADING);
+                ImGui::TextUnformatted("Central workspace");
+                ImGui::PopFont();
+                ImGui::TextDisabled("%.1f FPS", (double)io.Framerate);
+                ImGui::Spacing();
+                ImGui::Text("last menu action: %s", last_action);
+                ImGui::TextDisabled("Open View \xe2\x80\xba Component gallery, or the "
+                                    "Components rail icon.");
+            }
         }
         bb::end_panel();
 
