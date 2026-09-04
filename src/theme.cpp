@@ -22,7 +22,8 @@ constexpr ImVec4 rgb(int r, int g, int b) {
     return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
 }
 
-// Built-in Blockbench "Default (Dark)".
+// Built-in Blockbench "Default (Dark)". Kept for APP_THEME=<bbtheme file> use;
+// no longer the default (see ELEMENT_LIGHT below).
 const Palette BLOCKBENCH_DARK = {
     /*ui*/ rgb(0x28, 0x2c, 0x34),
     /*back*/ rgb(0x21, 0x25, 0x2b),
@@ -44,7 +45,34 @@ const Palette BLOCKBENCH_DARK = {
     /*is_dark*/ true,
 };
 
-Palette g_current = BLOCKBENCH_DARK;
+// Element UI's default light theme. Same Palette field *slots* as the
+// Blockbench palette, remapped to Element's colour roles:
+//   ui=card bg, back=page bg, deep=input bg, selected=primary-light-9 (hover
+//   fill), button=default-button bg, bright_ui/text=dropdown surface,
+//   light=strong/emphasis text (darkest, not "near white" as in the dark
+//   theme), accent_text=text-on-primary.
+const Palette ELEMENT_LIGHT = {
+    /*ui*/ rgb(0xff, 0xff, 0xff),
+    /*back*/ rgb(0xf2, 0xf3, 0xf5),
+    /*deep*/ rgb(0xff, 0xff, 0xff),
+    /*border*/ rgb(0xdc, 0xdf, 0xe6),
+    /*selected*/ rgb(0xec, 0xf5, 0xff),
+    /*button*/ rgb(0xff, 0xff, 0xff),
+    /*bright_ui*/ rgb(0xff, 0xff, 0xff),
+    /*bright_ui_text*/ rgb(0x30, 0x31, 0x33),
+    /*accent*/ rgb(0x40, 0x9e, 0xff),
+    /*frame*/ rgb(0xff, 0xff, 0xff),
+    /*text*/ rgb(0x60, 0x62, 0x66),
+    /*light*/ rgb(0x30, 0x31, 0x33),
+    /*accent_text*/ rgb(0xff, 0xff, 0xff),
+    /*subtle_text*/ rgb(0x90, 0x93, 0x99),
+    /*grid*/ rgb(0xdc, 0xdf, 0xe6),
+    /*wireframe*/ rgb(0xc0, 0xc4, 0xcc),
+    /*checkerboard*/ rgb(0xf5, 0xf7, 0xfa),
+    /*is_dark*/ false,
+};
+
+Palette g_current = ELEMENT_LIGHT;
 
 int hex_nibble(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -164,18 +192,15 @@ bool parse_hex(const std::string& in, ImVec4& out) {
 
 Palette load() {
     std::string path;
-    if (const char* env = std::getenv("APP_THEME"); env && *env) {
+    if (const char* env = std::getenv("APP_THEME"); env && *env)
         path = env;
-    } else {
-        std::string beside = exe_dir() + "/assets/blockbench-dark.bbtheme";
-        if (std::ifstream(beside)) path = beside;
-    }
+    // No APP_THEME -> Element UI's light theme (this branch's default).
 
-    if (path.empty()) return BLOCKBENCH_DARK;
+    if (path.empty()) return ELEMENT_LIGHT;
     std::string src = read_file(path);
     Palette out;
-    if (!src.empty() && parse(src, BLOCKBENCH_DARK, out)) return out;
-    return BLOCKBENCH_DARK;
+    if (!src.empty() && parse(src, ELEMENT_LIGHT, out)) return out;
+    return ELEMENT_LIGHT;
 }
 
 void apply(const Palette& p) {
@@ -207,8 +232,10 @@ void apply(const Palette& p) {
     s.SeparatorTextBorderSize = 1.0f;
     s.DockingSeparatorSize = 2.0f;
 
-    const ImVec4 hover_tint = p.is_dark ? p.light : p.deep;
-    const ImVec4 hover_bg = mix(p.ui, hover_tint, 0.06f);
+    // Dark theme: nudge panel bg toward white. Light theme: nudge toward the
+    // accent colour (Element's hover fill is a light primary tint, not grey).
+    const ImVec4 hover_tint = p.is_dark ? p.light : p.accent;
+    const ImVec4 hover_bg = mix(p.ui, hover_tint, p.is_dark ? 0.06f : 0.08f);
 
     ImVec4* col = s.Colors;
     col[ImGuiCol_Text] = p.text;

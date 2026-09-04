@@ -1,6 +1,7 @@
 #include "gallery.h"
 
 #include "bb.h"
+#include "el.h"
 #include "fonts.h"
 #include "icons.h"
 #include "theme.h"
@@ -16,19 +17,18 @@
 namespace gallery {
 namespace {
 
-// Live-example state.
+// Live-example state. Entries below are grouped to match Element UI's own
+// component taxonomy ("按 Element UI 分类分批次") — Batch 1 is Form.
 struct State {
     bool   toggle_a = true;
     bool   check_a = true, check_b = false;
     int    radio = 1;
-    int    segment = 0;
     int    combo = 2;
     float  slider = 0.4f;
-    double num = 12.5;
-    float  vec[3] = {1.0f, 0.0f, -2.5f};
-    float  color[4] = {0.24f, 0.56f, 1.0f, 1.0f};
+    double input_num = 3.0;
+    float  rate_val = 3.0f;
+    bool   btn_loading = false;
     std::string text = "cube";
-    std::string query;
 };
 State g;
 
@@ -42,109 +42,82 @@ struct Entry {
 
 // clang-format off
 const Entry ENTRIES[] = {
-    {"Buttons", "Button", "bb::button(\"Add Cube\");",
-     "A standard push button.",
-     []{ bb::button("Add Cube"); ImGui::SameLine(); bb::button("Add Group"); }},
+    // --- Button --------------------------------------------------------
+    {"Button", "Button", "el::button(\"Default\");\nel::button(\"Primary\", el::ButtonType::Primary);",
+     "Six semantic colours: Default / Primary / Success / Warning / Danger / Info.",
+     []{ el::button("Default"); ImGui::SameLine();
+         el::button("Primary", el::ButtonType::Primary); ImGui::SameLine();
+         el::button("Success", el::ButtonType::Success); ImGui::SameLine();
+         el::button("Warning", el::ButtonType::Warning); ImGui::SameLine();
+         el::button("Danger", el::ButtonType::Danger); ImGui::SameLine();
+         el::button("Info", el::ButtonType::Info); }},
 
-    {"Buttons", "Primary button", "bb::primary_button(\"Confirm\");",
-     "Accent-filled button for the main action in a dialog.",
-     []{ bb::primary_button("Confirm"); ImGui::SameLine(); bb::button("Cancel"); }},
+    {"Button", "Button (plain)", "el::ButtonOpts o; o.plain = true;\nel::button(\"Primary\", el::ButtonType::Primary, o);",
+     "`plain` swaps the fill for a light tint with a coloured border — Element's "
+     "secondary emphasis.",
+     []{ el::ButtonOpts o; o.plain = true;
+         el::button("Primary", el::ButtonType::Primary, o); ImGui::SameLine();
+         el::button("Success", el::ButtonType::Success, o); ImGui::SameLine();
+         el::button("Danger", el::ButtonType::Danger, o); }},
 
-    {"Buttons", "Icon button", "bb::icon_button(ICON_BRUSH, /*active=*/true);",
-     "Compact 30x28 icon button. `active` draws a 2px accent underline "
-     "(used for the selected tool).",
-     []{ static int tool = 0;
-         const char* ic[] = {ICON_BRUSH, ICON_MOVE, ICON_RESIZE, ICON_PIVOT};
-         for (int i = 0; i < 4; i++) { if (i) ImGui::SameLine(0, 2);
-             if (bb::icon_button(ic[i], tool == i)) tool = i; } }},
+    {"Button", "Button (round / circle)",
+     "el::ButtonOpts o; o.round = true;\nel::button(\"Search\", el::ButtonType::Primary, o);",
+     "`round` gives pill ends; `circle` (paired with an icon, no label) makes a "
+     "square icon button.",
+     []{ el::ButtonOpts ro; ro.round = true;
+         el::button("Search", el::ButtonType::Primary, ro); ImGui::SameLine();
+         el::ButtonOpts co; co.circle = true; co.icon = ICON_EDIT;
+         el::button("", el::ButtonType::Primary, co); ImGui::SameLine();
+         co.icon = ICON_DELETE;
+         el::button("", el::ButtonType::Danger, co); }},
 
-    {"Buttons", "Toggle", "bb::toggle(\"Snap to grid\", &on);",
-     "A pill on/off switch. Returns true on the frame it changed.",
-     []{ bb::toggle("Snap to grid", &g.toggle_a);
-         bb::toggle("Local space", &g.check_b); }},
+    {"Button", "Button (disabled / loading)",
+     "el::ButtonOpts o; o.disabled = true;\nel::button(\"Confirm\", el::ButtonType::Primary, o);",
+     "Disabled buttons ignore clicks and fade to 50% alpha; loading buttons show "
+     "a spinner in place of the label.",
+     []{ el::ButtonOpts d; d.disabled = true;
+         el::button("Confirm", el::ButtonType::Primary, d); ImGui::SameLine();
+         if (el::button("Toggle loading")) g.btn_loading = !g.btn_loading;
+         ImGui::SameLine();
+         el::ButtonOpts l; l.loading = g.btn_loading;
+         el::button("Loading", el::ButtonType::Primary, l); }},
 
-    {"Numeric", "NumSlider", "bb::NumOpts o;\no.step = 0.25; o.decimals = 2;\n"
-     "bb::num_slider(\"pos.x\", &value, o);",
-     "Blockbench's signature number field: drag left/right to scrub, scroll to "
-     "nudge, double-click to type.",
-     []{ bb::NumOpts o; o.step = 0.25; o.decimals = 2;
-         bb::num_slider("posx", &g.num, o); }},
-
-    {"Numeric", "Vec3", "float xyz[3];\nbb::vec3(\"position\", xyz);",
-     "Three labelled NumSliders in a row (X / Y / Z).",
-     []{ bb::vec3("position", g.vec); }},
-
-    {"Numeric", "Slider", "bb::slider_float(\"opacity\", &v, 0.0f, 1.0f);",
-     "A bounded value slider.",
-     []{ bb::slider_float("opacity", &g.slider, 0.0f, 1.0f); }},
-
-    {"Inputs", "Text input", "bb::input_text(\"name\", &str);",
+    // --- Form ------------------------------------------------------------
+    {"Form", "Input", "bb::input_text(\"name\", &str);",
      "Single-line text field bound to a std::string.",
      []{ bb::input_text("name", &g.text); }},
 
-    {"Inputs", "Search", "bb::search(\"outliner\", &query);",
-     "Text field with a leading search icon and placeholder.",
-     []{ bb::search("outliner", &g.query); }},
+    {"Form", "InputNumber", "double v = 3;\nel::input_number(\"count\", &v, 1.0, 0.0, 10.0);",
+     "A bordered field with -/+ steppers (Element's el-input-number).",
+     []{ el::input_number("count", &g.input_num, 1.0, 0.0, 10.0); }},
 
-    {"Inputs", "Combo", "const char* items[] = {\"Edit\",\"Paint\",\"Animate\"};\n"
+    {"Form", "Select", "const char* items[] = {\"Edit\",\"Paint\",\"Animate\"};\n"
      "bb::combo(\"mode\", &current, items, 3);",
      "Dropdown selection.",
      []{ static const char* items[] = {"Edit", "Paint", "Animate", "Display"};
          bb::combo("mode", &g.combo, items, 4); }},
 
-    {"Inputs", "Segmented", "const char* seg[] = {\"Object\",\"Edge\",\"Face\"};\n"
-     "bb::segmented(\"select\", &mode, seg, 3);",
-     "Connected segmented control; the active segment is accent-filled.",
-     []{ static const char* seg[] = {"Object", "Edge", "Face"};
-         bb::segmented("select", &g.segment, seg, 3); }},
-
-    {"Inputs", "Checkbox", "bb::checkbox(\"Visible\", &v);",
-     "A boolean checkbox.",
-     []{ bb::checkbox("Visible", &g.check_a); bb::checkbox("Locked", &g.check_b); }},
-
-    {"Inputs", "Radio", "bb::radio(\"Local\", &space, 0);\n"
+    {"Form", "Radio / RadioGroup", "bb::radio(\"Local\", &space, 0);\n"
      "bb::radio(\"Global\", &space, 1);",
      "Mutually-exclusive options sharing one int.",
      []{ bb::radio("Local", &g.radio, 0); ImGui::SameLine();
          bb::radio("Global", &g.radio, 1); }},
 
-    {"Inputs", "Color", "bb::color_edit(\"tint\", rgba);",
-     "Colour picker with hex entry and an alpha bar.",
-     []{ bb::color_edit("tint", g.color); }},
+    {"Form", "Checkbox / CheckboxGroup", "bb::checkbox(\"Visible\", &v);",
+     "Independent booleans.",
+     []{ bb::checkbox("Visible", &g.check_a); bb::checkbox("Locked", &g.check_b); }},
 
-    {"Feedback", "Info", "bb::info(\"Model saved to project.\");",
-     "An inline informational line with an accent icon.",
-     []{ bb::info("Model saved to project."); }},
+    {"Form", "Switch", "bb::toggle(\"Snap to grid\", &on);",
+     "A pill on/off switch. Returns true on the frame it changed.",
+     []{ bb::toggle("Snap to grid", &g.toggle_a); }},
 
-    {"Feedback", "Warning", "bb::warning(\"3 faces have no UV mapping.\");",
-     "An inline warning line with an amber icon.",
-     []{ bb::warning("3 faces have no UV mapping."); }},
+    {"Form", "Slider", "bb::slider_float(\"opacity\", &v, 0.0f, 1.0f);",
+     "A bounded value slider.",
+     []{ bb::slider_float("opacity", &g.slider, 0.0f, 1.0f); }},
 
-    {"Feedback", "Progress", "bb::progress(0.62f, \"62%\");",
-     "A determinate progress bar with an optional overlay label.",
-     []{ static float t = 0.0f; t += ImGui::GetIO().DeltaTime * 0.15f;
-         if (t > 1.0f) t = 0.0f;
-         char b[8]; std::snprintf(b, sizeof(b), "%.0f%%", t * 100);
-         bb::progress(t, b); }},
-
-    {"Feedback", "Spinner", "bb::spinner();",
-     "An indeterminate activity spinner.",
-     []{ bb::spinner(); ImGui::SameLine(); ImGui::AlignTextToFramePadding();
-         ImGui::TextDisabled("Loading\xe2\x80\xa6"); }},
-
-    {"Feedback", "Kbd", "bb::kbd(\"Ctrl\"); bb::kbd(\"Z\");",
-     "Keycap badges, rendered inline.",
-     []{ bb::kbd("Ctrl"); ImGui::SameLine(0, 4); bb::kbd("Shift");
-         ImGui::SameLine(0, 4); bb::kbd("Z"); }},
-
-    {"Structure", "Collapsing", "if (bb::collapsing(\"Transform\")) { ... }",
-     "A collapsible section header for grouping panel content.",
-     []{ if (bb::collapsing("Transform")) {
-             ImGui::Indent(8);
-             bb::field_label("Pivot point");
-             bb::vec3("pivot", g.vec);
-             ImGui::Unindent(8);
-         } }},
+    {"Form", "Rate", "float v = 3;\nel::rate(\"quality\", &v);",
+     "A row of stars; click to set the value.",
+     []{ el::rate("quality", &g.rate_val); }},
 };
 constexpr int COUNT = (int)(sizeof(ENTRIES) / sizeof(ENTRIES[0]));
 

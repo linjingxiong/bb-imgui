@@ -118,6 +118,7 @@ add_executable(bb_imgui
     src/shell.cpp
     src/menu.cpp
     src/bb.cpp
+    src/el.cpp
     src/gallery.cpp
     src/logo.cpp
 )
