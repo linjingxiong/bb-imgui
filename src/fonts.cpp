@@ -59,13 +59,20 @@ void install(float /*dpi_scale*/) {
 
     ImGui::GetStyle().FontSizeBase = theme::size::BODY;
 
-    g_body = io.Fonts->AddFontFromFileTTF(regular.c_str(), theme::size::BODY);
+    // Assistant is a light face; stb_truetype renders thin strokes lighter than
+    // a browser would. A small brighten + extra oversampling closes the gap.
+    ImFontConfig cfg;
+    cfg.RasterizerMultiply = 1.18f;
+    cfg.OversampleH = 3;
+    cfg.OversampleV = 2;
+
+    g_body = io.Fonts->AddFontFromFileTTF(regular.c_str(), theme::size::BODY, &cfg);
     if (g_body)
         merge_icons(icons);
     else
         g_body = io.Fonts->AddFontDefault();
 
-    g_medium = io.Fonts->AddFontFromFileTTF(semibold.c_str(), theme::size::BODY);
+    g_medium = io.Fonts->AddFontFromFileTTF(semibold.c_str(), theme::size::BODY, &cfg);
     if (g_medium)
         merge_icons(icons);
     else

@@ -108,10 +108,11 @@ void titlebar(GLFWwindow* win) {
     float wordmark_w = 0.0f;
     if (logo::texture()) {
         ImVec2 ps = logo::pixel_size();
-        float draw_h = TITLEBAR_H - 8.0f;              // ~18px in the 26px bar
-        wordmark_w = ps.x * (draw_h / ps.y);
-        dl->AddImage(logo::texture(), ImVec2(tl.x + 10, tl.y + 4),
-                     ImVec2(tl.x + 10 + wordmark_w, tl.y + 4 + draw_h));
+        wordmark_w = 134.0f;                       // Blockbench #corner_logo img width
+        float draw_h = wordmark_w * (ps.y / ps.x); // keep aspect (~22px)
+        float top = tl.y + (TITLEBAR_H - draw_h) * 0.5f;
+        dl->AddImage(logo::texture(), ImVec2(tl.x + 10, top),
+                     ImVec2(tl.x + 10 + wordmark_w, top + draw_h));
     } else {
         ImGui::PushFont(fonts::medium(), theme::size::WORDMARK);
         ImVec2 ts = ImGui::CalcTextSize("Blockbench");
@@ -121,7 +122,7 @@ void titlebar(GLFWwindow* win) {
         ImGui::PopFont();
     }
 
-    float x = tl.x + 12 + wordmark_w + 16;
+    float x = tl.x + 10 + wordmark_w + 22;
     g_menu_clicked = nullptr;
     ImGui::PushFont(nullptr, theme::size::MENU_POINT);
     for (int i = 0; i < g_menu_count; i++) {
