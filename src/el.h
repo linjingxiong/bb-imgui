@@ -49,6 +49,12 @@ int button_group(const char* const* labels, int count, const ButtonType* types =
 // changes.
 bool checkbox(const char* label, bool* v, bool disabled = false);
 
+// A 14x14px radio button (same reasoning as checkbox() — Element's radio
+// dot is a fixed size, independent of the global control-height padding).
+// `*current` is shared by every radio() call in the group; this one is
+// selected when `*current == value`. Returns true the frame it's picked.
+bool radio(const char* label, int* current, int value, bool disabled = false);
+
 // A bordered number field with - / + steppers (Element's el-input-number).
 bool input_number(const char* id, double* v, double step = 1.0, double min = 0.0,
                   double max = 0.0, int decimals = 0);

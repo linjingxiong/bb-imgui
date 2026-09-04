@@ -24,6 +24,7 @@ struct State {
     bool   toggle_a = true;
     bool   check_a = true, check_b = false;
     bool   check_disabled_off = false, check_disabled_on = true;
+    int    radio_disabled = 1;
     int    radio = 1;
     int    combo = 2;
     float  slider = 0.4f;
@@ -199,11 +200,17 @@ const Entry ENTRIES[] = {
      []{ static const char* items[] = {"Edit", "Paint", "Animate", "Display"};
          bb::combo("mode", &g.combo, items, 4); }},
 
-    {"Form", "Radio / RadioGroup", nullptr, "bb::radio(\"Local\", &space, 0);\n"
-     "bb::radio(\"Global\", &space, 1);",
-     "Mutually-exclusive options sharing one int.",
-     []{ bb::radio("Local", &g.radio, 0); ImGui::SameLine();
-         bb::radio("Global", &g.radio, 1); }},
+    {"Form", "Radio", "Basic usage", "el::radio(\"Local\", &space, 0);\n"
+     "el::radio(\"Global\", &space, 1);",
+     "Mutually-exclusive options sharing one int; only one radio in the "
+     "group can be selected.",
+     []{ el::radio("Local", &g.radio, 0); ImGui::SameLine(0, 16);
+         el::radio("Global", &g.radio, 1); }},
+
+    {"Form", "Radio", "Disabled", "el::radio(\"Option\", &v, 1, /*disabled=*/true);",
+     "The radio is disabled.",
+     []{ el::radio("Option 1", &g.radio_disabled, 0, true); ImGui::SameLine(0, 16);
+         el::radio("Option 2", &g.radio_disabled, 1, true); }},
 
     {"Form", "Checkbox", "Basic usage", "el::checkbox(\"Option\", &v);",
      "Used alone, to represent a switch between two states. The content in "

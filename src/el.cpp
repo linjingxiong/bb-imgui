@@ -306,6 +306,53 @@ bool checkbox(const char* label, bool* v, bool disabled) {
     return clicked;
 }
 
+bool radio(const char* label, int* current, int value, bool disabled) {
+    ImGui::PushID(label);
+    bool checked = (*current == value);
+    const float d = 14.0f; // $--radio-input-{height,width}
+    const float r = d * 0.5f;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    ImVec2 lts = ImGui::CalcTextSize(label);
+    float row_h = std::max(d, lts.y);
+    ImVec2 full_size(d + (label[0] ? 6.0f + lts.x : 0.0f), row_h);
+    ImGui::InvisibleButton("rd", full_size);
+    bool hovered = !disabled && ImGui::IsItemHovered();
+    bool clicked = !disabled && !checked && ImGui::IsItemClicked();
+    if (clicked) *current = value;
+
+    ImVec2 c(pos.x + r, pos.y + (row_h - d) * 0.5f + r);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // Colours straight from theme-chalk's radio.scss + var.scss. Unlike
+    // checkbox, the ring stays white even when checked — only the border
+    // and the inner dot pick up colour.
+    ImVec4 bg, border, dot;
+    if (disabled) {
+        bg = rgb(0xf5, 0xf7, 0xfa);
+        border = rgb(0xe4, 0xe7, 0xed);
+        dot = rgb(0xc0, 0xc4, 0xcc);
+    } else {
+        bg = rgb(0xff, 0xff, 0xff);
+        border = checked || hovered ? rgb(0x40, 0x9e, 0xff) : rgb(0xdc, 0xdf, 0xe6);
+        dot = rgb(0x40, 0x9e, 0xff);
+    }
+    dl->AddCircleFilled(c, r, u32(bg));
+    dl->AddCircle(c, r, u32(border), 0, 1.4f);
+    if (checked) dl->AddCircleFilled(c, r * 0.43f, u32(dot));
+
+    if (label[0]) {
+        ImVec4 text_col = disabled ? rgb(0xc0, 0xc4, 0xcc)
+                         : (checked ? rgb(0x40, 0x9e, 0xff) : rgb(0x60, 0x62, 0x66));
+        dl->AddText(ImVec2(pos.x + d + 6.0f, pos.y + (row_h - lts.y) * 0.5f), u32(text_col),
+                    label);
+    }
+    ImGui::PopFont();
+    ImGui::PopID();
+    return clicked;
+}
+
 bool input_number(const char* id, double* v, double step, double min, double max,
                   int decimals) {
     const theme::Palette& p = theme::palette();
