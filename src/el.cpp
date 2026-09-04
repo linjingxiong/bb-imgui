@@ -184,11 +184,11 @@ bool input_number(const char* id, double* v, double step, double min, double max
                 u32(p.text), buf);
     ImGui::PopFont();
 
+    // Reserve the middle strip so the whole control still occupies its full
+    // width in the layout (no click behaviour here — steppers cover editing
+    // in this pass; double-click-to-type isn't implemented yet).
     ImGui::SetCursorScreenPos(pos);
-    ImGui::InvisibleButton("##mid", ImVec2(total_w - 2 * bw < 0 ? 0 : total_w - 2 * bw, h));
-    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && ImGui::IsItemHovered()) {
-        // (No inline text edit in this pass — steppers cover the common case.)
-    }
+    ImGui::Dummy(ImVec2(total_w - 2 * bw < 0 ? 0 : total_w - 2 * bw, h));
     ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + h));
     ImGui::Dummy(ImVec2(total_w, 0));
     ImGui::PopID();
@@ -236,7 +236,12 @@ bool tag(const char* text, TagType type, bool plain, bool closable) {
         {rgb(0xf4, 0xf4, 0xf5), rgb(0xe9, 0xe9, 0xeb), rgb(0x90, 0x93, 0x99)},
     };
     const C& c = table[(int)type];
-    (void)plain;
+    // plain: light tinted bg + border + coloured text (as tabled above).
+    // !plain: solid coloured fill + white text ("dark" effect).
+    ImVec4 fill = plain ? c.bg : c.fg;
+    ImVec4 border = plain ? c.border : c.fg;
+    ImVec4 text_col = plain ? c.fg : rgb(0xff, 0xff, 0xff);
+
     ImGui::PushID(text);
     ImGui::PushFont(nullptr, theme::size::SMALL);
     ImVec2 ts = ImGui::CalcTextSize(text);
@@ -245,14 +250,14 @@ bool tag(const char* text, TagType type, bool plain, bool closable) {
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImGui::Dummy(ImVec2(w, h));
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), u32(c.bg), 3.0f);
-    dl->AddRect(pos, ImVec2(pos.x + w, pos.y + h), u32(c.border), 3.0f);
-    dl->AddText(ImVec2(pos.x + pad, pos.y + (h - ts.y) * 0.5f), u32(c.fg), text);
+    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), u32(fill), 3.0f);
+    dl->AddRect(pos, ImVec2(pos.x + w, pos.y + h), u32(border), 3.0f);
+    dl->AddText(ImVec2(pos.x + pad, pos.y + (h - ts.y) * 0.5f), u32(text_col), text);
     bool clicked_close = false;
     if (closable) {
         ImVec2 xpos(pos.x + w - 14.0f, pos.y + h * 0.5f - 6.0f);
-        dl->AddLine(ImVec2(xpos.x, xpos.y), ImVec2(xpos.x + 8, xpos.y + 8), u32(c.fg), 1.0f);
-        dl->AddLine(ImVec2(xpos.x, xpos.y + 8), ImVec2(xpos.x + 8, xpos.y), u32(c.fg), 1.0f);
+        dl->AddLine(ImVec2(xpos.x, xpos.y), ImVec2(xpos.x + 8, xpos.y + 8), u32(text_col), 1.0f);
+        dl->AddLine(ImVec2(xpos.x, xpos.y + 8), ImVec2(xpos.x + 8, xpos.y), u32(text_col), 1.0f);
         ImGui::SetCursorScreenPos(ImVec2(xpos.x - 2, xpos.y - 2));
         ImGui::InvisibleButton("x", ImVec2(12, 12));
         clicked_close = ImGui::IsItemClicked();
@@ -466,9 +471,9 @@ void progress_circle(float frac, float radius, const char* text) {
     ImGui::PopFont();
 }
 
-bool tree_node(const char* label, bool leaf, bool selected) {
+bool tree_node(const char* label, bool leaf, bool selected, const char* id) {
     const theme::Palette& p = theme::palette();
-    ImGui::PushID(label);
+    ImGui::PushID(id ? id : label);
     float h = 26.0f;
     float w = ImGui::GetContentRegionAvail().x;
     ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -824,7 +829,7 @@ void steps(const char* const* labels, int count, int current) {
     float cy = pos.y + r;
 
     for (int i = 0; i < count; i++) {
-        float cx = pos.x + seg * i + r + (i == 0 ? 0.0f : 0.0f);
+        float cx = pos.x + seg * i + r;
         ImVec2 c(cx, cy);
         bool done = i < current, active = i == current;
 
@@ -972,9 +977,9 @@ void popover_style_pop() {
     ImGui::PopStyleColor(3);
 }
 
-bool collapse_item(const char* title, bool* open) {
+bool collapse_item(const char* title, bool* open, const char* id) {
     const theme::Palette& p = theme::palette();
-    ImGui::PushID(title);
+    ImGui::PushID(id ? id : title);
     float h = 40.0f;
     float w = ImGui::GetContentRegionAvail().x;
     ImVec2 pos = ImGui::GetCursorScreenPos();

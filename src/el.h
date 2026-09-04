@@ -38,8 +38,10 @@ bool input_number(const char* id, double* v, double step = 1.0, double min = 0.0
 bool rate(const char* id, float* value, int max_stars = 5, bool allow_half = false);
 
 enum class TagType { Default, Success, Warning, Danger, Info };
-// A small pill label. `closable` draws an "x"; returns true the frame it's
-// clicked (the caller removes the tag).
+// A small pill label. `plain` (default) is a light tinted background with
+// coloured text/border; `plain = false` is a solid coloured fill with white
+// text (Element's "dark" effect — more emphasis). `closable` draws an "x";
+// returns true the frame it's clicked (the caller removes the tag).
 bool tag(const char* text, TagType type = TagType::Default, bool plain = true,
         bool closable = false);
 
@@ -84,8 +86,12 @@ void progress_circle(float frac, float radius = 40.0f, const char* text = nullpt
 
 // One expandable row of an el-tree. Call for each node; if it returns true,
 // draw the children (indent yourself) then call tree_pop(). `leaf` nodes
-// have no disclosure arrow and can't be expanded.
-bool tree_node(const char* label, bool leaf = false, bool selected = false);
+// have no disclosure arrow and can't be expanded. Expand state is keyed by
+// `id` if given, else by `label` — pass an explicit `id` when sibling
+// nodes can share the same display text (e.g. two objects both named
+// "Cube"), or their open/closed state will collide.
+bool tree_node(const char* label, bool leaf = false, bool selected = false,
+              const char* id = nullptr);
 void tree_pop();
 
 // A row of page buttons with prev/next arrows. `current` is 1-based.
@@ -190,8 +196,9 @@ void popover_style_pop();
 // One panel of an el-collapse accordion. Call for each panel; if it
 // returns true, draw the panel body then call collapse_pop(). `*open`
 // holds this panel's own expanded state (independent panels, not a
-// single-open accordion).
-bool collapse_item(const char* title, bool* open);
+// single-open accordion). Pass an explicit `id` if two panels can share
+// the same `title` text, same caveat as tree_node().
+bool collapse_item(const char* title, bool* open, const char* id = nullptr);
 void collapse_pop();
 
 struct TimelineItem {

@@ -88,4 +88,3 @@
 #define ICON_ARROW_FORWARD       u8"\ue5c8"
 #define ICON_ERROR               u8"\ue000"
 #define ICON_SUCCESS             u8"\ue86c"
-#define ICON_QUESTION            u8"\ue887"
