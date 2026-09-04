@@ -410,4 +410,158 @@ void card_end() {
     ImGui::PopID();
 }
 
+// ===========================================================================
+// Data (Batch 2)
+// ===========================================================================
+void table(const char* id, const char* const* headers, int col_count,
+          const char* const* rows, int row_count) {
+    const theme::Palette& p = theme::palette();
+    ImGui::PushID(id);
+    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, u32(p.border));
+    ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, u32(p.border));
+    ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, u32(rgb(0xfa, 0xfa, 0xfa)));
+    ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, u32(rgb(0xfa, 0xfa, 0xfa)));
+    ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                            ImGuiTableFlags_SizingStretchProp;
+    if (ImGui::BeginTable("t", col_count, flags)) {
+        for (int c = 0; c < col_count; c++) ImGui::TableSetupColumn(headers[c]);
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::TableHeadersRow();
+        for (int r = 0; r < row_count; r++) {
+            ImGui::TableNextRow();
+            for (int c = 0; c < col_count; c++) {
+                ImGui::TableSetColumnIndex(c);
+                ImGui::TextColored(p.text, "%s", rows[r * col_count + c]);
+            }
+        }
+        ImGui::PopFont();
+        ImGui::EndTable();
+    }
+    ImGui::PopStyleColor(4);
+    ImGui::PopID();
+}
+
+void progress_circle(float frac, float radius, const char* text) {
+    frac = std::clamp(frac, 0.0f, 1.0f);
+    const theme::Palette& p = theme::palette();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(radius * 2, radius * 2));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 c(pos.x + radius, pos.y + radius);
+    float thick = radius * 0.14f;
+    dl->PathArcTo(c, radius - thick, -1.5707963f, 6.2831853f - 1.5707963f, 48);
+    dl->PathStroke(u32(p.deep), 0, thick);
+    if (frac > 0.0f) {
+        float a1 = -1.5707963f + frac * 6.2831853f;
+        dl->PathArcTo(c, radius - thick, -1.5707963f, a1, std::max(1, (int)(48 * frac)));
+        dl->PathStroke(u32(rgb(0x67, 0xc2, 0x3a)), 0, thick);
+    }
+    char buf[16];
+    if (!text) { std::snprintf(buf, sizeof(buf), "%d%%", (int)(frac * 100)); text = buf; }
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    ImVec2 ts = ImGui::CalcTextSize(text);
+    dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), u32(p.text), text);
+    ImGui::PopFont();
+}
+
+bool tree_node(const char* label, bool leaf, bool selected) {
+    const theme::Palette& p = theme::palette();
+    ImGui::PushID(label);
+    float h = 26.0f;
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    ImGuiID open_id = ImGui::GetID("open");
+    bool open = leaf || st->GetBool(open_id, false);
+
+    ImGui::InvisibleButton("row", ImVec2(w, h));
+    bool hovered = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked() && !leaf) { open = !open; st->SetBool(open_id, open); }
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (selected)
+        dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), u32(p.selected));
+    else if (hovered)
+        dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), u32(mix(p.ui, p.accent, 0.04f)));
+
+    float x = pos.x + 4.0f;
+    if (!leaf) {
+        ImGui::PushFont(fonts::body(), 13.0f);
+        ImVec2 its = ImGui::CalcTextSize(ICON_CHEVRON_RIGHT);
+        ImVec2 ip(x, pos.y + (h - its.y) * 0.5f);
+        if (open) {
+            // Rotate 90deg visually by drawing a simple down-caret via text
+            // baseline trick isn't available for a PUA glyph, so just nudge
+            // colour/weight to show state instead of a true rotation.
+            dl->AddText(ip, u32(p.accent), ICON_CHEVRON_RIGHT);
+        } else {
+            dl->AddText(ip, u32(p.subtle_text), ICON_CHEVRON_RIGHT);
+        }
+        ImGui::PopFont();
+    }
+    x += 18.0f;
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    ImVec2 ts = ImGui::CalcTextSize(label);
+    dl->AddText(ImVec2(x, pos.y + (h - ts.y) * 0.5f), u32(selected ? p.accent : p.text), label);
+    ImGui::PopFont();
+
+    ImGui::PopID();
+    return !leaf && open;
+}
+
+void tree_pop() {}
+
+bool pagination(const char* id, int* current, int total_pages) {
+    const theme::Palette& p = theme::palette();
+    ImGui::PushID(id);
+    bool changed = false;
+    float h = 28.0f, bw = 28.0f;
+
+    auto arrow_btn = [&](const char* glyph, int target, bool enabled) {
+        ImGui::PushID(glyph);
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("a", ImVec2(bw, h));
+        bool hov = enabled && ImGui::IsItemHovered();
+        if (enabled && ImGui::IsItemClicked()) { *current = target; changed = true; }
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (hov) dl->AddRectFilled(pos, ImVec2(pos.x + bw, pos.y + h), u32(p.selected), theme::RADIUS);
+        ImGui::PushFont(fonts::body(), 14.0f);
+        ImVec2 ts = ImGui::CalcTextSize(glyph);
+        ImVec4 col = enabled ? (hov ? p.accent : p.text) : p.subtle_text;
+        dl->AddText(ImVec2(pos.x + (bw - ts.x) * 0.5f, pos.y + (h - ts.y) * 0.5f), u32(col), glyph);
+        ImGui::PopFont();
+        ImGui::PopID();
+    };
+
+    arrow_btn(ICON_ARROW_BACK, *current - 1, *current > 1);
+    ImGui::SameLine(0, 4);
+
+    int lo = std::max(1, *current - 2), hi = std::min(total_pages, *current + 2);
+    for (int i = lo; i <= hi; i++) {
+        ImGui::PushID(i);
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("p", ImVec2(bw, h));
+        bool hov = ImGui::IsItemHovered();
+        bool on = (i == *current);
+        if (ImGui::IsItemClicked() && !on) { *current = i; changed = true; }
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (on) dl->AddRectFilled(pos, ImVec2(pos.x + bw, pos.y + h), u32(p.accent), theme::RADIUS);
+        else if (hov) dl->AddRectFilled(pos, ImVec2(pos.x + bw, pos.y + h), u32(p.selected), theme::RADIUS);
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "%d", i);
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImVec2 ts = ImGui::CalcTextSize(buf);
+        dl->AddText(ImVec2(pos.x + (bw - ts.x) * 0.5f, pos.y + (h - ts.y) * 0.5f),
+                    u32(on ? rgb(255, 255, 255) : (hov ? p.accent : p.text)), buf);
+        ImGui::PopFont();
+        ImGui::PopID();
+        ImGui::SameLine(0, 4);
+    }
+
+    arrow_btn(ICON_ARROW_FORWARD, *current + 1, *current < total_pages);
+    ImGui::NewLine();
+    ImGui::PopID();
+    return changed;
+}
+
 } // namespace el

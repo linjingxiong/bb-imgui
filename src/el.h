@@ -68,4 +68,28 @@ void card(const char* header, Fn&& body) {
     card_end();
 }
 
+// ---------------------------------------------------------------------------
+// Data (Batch 2)
+// ---------------------------------------------------------------------------
+
+// A bordered, striped data table (el-table). `rows`/`row_count` are
+// row_count*col_count cell strings laid out row-major. No sorting/selection
+// in this pass.
+void table(const char* id, const char* const* headers, int col_count,
+          const char* const* rows, int row_count);
+
+// A ring progress indicator with a centred percentage label (el-progress
+// type="circle"). `frac` is 0..1.
+void progress_circle(float frac, float radius = 40.0f, const char* text = nullptr);
+
+// One expandable row of an el-tree. Call for each node; if it returns true,
+// draw the children (indent yourself) then call tree_pop(). `leaf` nodes
+// have no disclosure arrow and can't be expanded.
+bool tree_node(const char* label, bool leaf = false, bool selected = false);
+void tree_pop();
+
+// A row of page buttons with prev/next arrows. `current` is 1-based.
+// Returns true the frame it changes.
+bool pagination(const char* id, int* current, int total_pages);
+
 } // namespace el

@@ -18,7 +18,7 @@ namespace gallery {
 namespace {
 
 // Live-example state. Entries below are grouped to match Element UI's own
-// component taxonomy ("按 Element UI 分类分批次") — Batch 1 is Form.
+// component taxonomy ("按 Element UI 分类分批次") — Batch 1 is Form, Batch 2 is Data.
 struct State {
     bool   toggle_a = true;
     bool   check_a = true, check_b = false;
@@ -29,6 +29,9 @@ struct State {
     float  rate_val = 3.0f;
     bool   btn_loading = false;
     std::string text = "cube";
+
+    bool   tag_closable[3] = {true, true, true};
+    int    pagination_page = 3;
 };
 State g;
 
@@ -118,6 +121,83 @@ const Entry ENTRIES[] = {
     {"Form", "Rate", "float v = 3;\nel::rate(\"quality\", &v);",
      "A row of stars; click to set the value.",
      []{ el::rate("quality", &g.rate_val); }},
+
+    // --- Data --------------------------------------------------------
+    {"Data", "Table", "const char* head[] = {\"Name\",\"Type\"};\n"
+     "const char* rows[] = {\"Cube\",\"Mesh\", \"Group\",\"Bone\"};\n"
+     "el::table(\"t\", head, 2, rows, 2);",
+     "A bordered, striped data table with a light grey header.",
+     []{ static const char* head[] = {"Name", "Type", "Visible"};
+         static const char* rows[] = {
+             "Cube",  "Mesh", "Yes",
+             "Group", "Bone", "Yes",
+             "Torso", "Bone", "No",
+         };
+         el::table("demo", head, 3, rows, 3); }},
+
+    {"Data", "Tag", "el::tag(\"Tag One\", el::TagType::Success);",
+     "A small pill label in one of five semantic colours; `closable` adds an "
+     "\"x\" the caller can react to.",
+     []{ static const el::TagType types[] = {el::TagType::Default, el::TagType::Success,
+             el::TagType::Warning};
+         static const char* names[] = {"Default", "Success", "Warning"};
+         for (int i = 0; i < 3; i++) {
+             if (i) ImGui::SameLine(0, 6);
+             if (!g.tag_closable[i]) continue;
+             if (el::tag(names[i], types[i], true, true)) g.tag_closable[i] = false;
+         }
+         if (!g.tag_closable[0] && !g.tag_closable[1] && !g.tag_closable[2]) {
+             ImGui::SameLine();
+             if (bb::button("Reset")) for (bool& b : g.tag_closable) b = true;
+         } }},
+
+    {"Data", "Progress", "bb::progress(0.72f, \"72%\");\nel::progress_circle(0.72f);",
+     "Line and circle variants, both driven by a 0..1 fraction.",
+     []{ static float t = 0.0f; t += ImGui::GetIO().DeltaTime * 0.1f; if (t > 1.0f) t = 0.0f;
+         char b[8]; std::snprintf(b, sizeof(b), "%.0f%%", t * 100);
+         bb::progress(t, b);
+         ImGui::Dummy(ImVec2(0, 8));
+         el::progress_circle(t); }},
+
+    {"Data", "Tree", "if (el::tree_node(\"Group\")) {\n    el::tree_node(\"Cube\", /*leaf=*/true);\n    el::tree_pop();\n}",
+     "An indented, expandable outliner-style tree. Click a row with children "
+     "to toggle it.",
+     []{ if (el::tree_node("Model")) {
+             ImGui::Indent(14);
+             if (el::tree_node("Group", false, true)) {
+                 ImGui::Indent(14);
+                 el::tree_node("Cube", true);
+                 el::tree_node("Cube.001", true);
+                 ImGui::Unindent(14);
+                 el::tree_pop();
+             }
+             el::tree_node("Torso", true);
+             ImGui::Unindent(14);
+             el::tree_pop();
+         } }},
+
+    {"Data", "Pagination", "int page = 3;\nel::pagination(\"p\", &page, 10);",
+     "Prev/next arrows plus a window of nearby page numbers; the active page "
+     "is accent-filled.",
+     []{ el::pagination("demo", &g.pagination_page, 10); }},
+
+    {"Data", "Badge", "el::button(\"Messages\");\nel::badge(5);",
+     "A numeric/dot badge anchored to the top-right corner of whatever was "
+     "drawn immediately before it.",
+     []{ el::button("Messages"); el::badge(5); ImGui::SameLine(0, 24);
+         el::button("New"); el::badge(0, true); }},
+
+    {"Data", "Avatar", "el::avatar(\"JD\");",
+     "A circular initials avatar; colour is derived from the initials.",
+     []{ el::avatar("JD"); ImGui::SameLine(0, 8); el::avatar("AB"); ImGui::SameLine(0, 8);
+         el::avatar("XY"); }},
+
+    {"Data", "Card", "el::card(\"Title\", [] {\n    ImGui::TextUnformatted(\"Body content\");\n});",
+     "A white bordered container with an optional header and rule.",
+     []{ el::card("Cube", [] {
+             ImGui::TextUnformatted("32 x 32 x 32");
+             ImGui::TextDisabled("Last edited 2m ago");
+         }); }},
 };
 constexpr int COUNT = (int)(sizeof(ENTRIES) / sizeof(ENTRIES[0]));
 
