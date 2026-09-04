@@ -22,6 +22,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef BB_PROFILE
+#include <chrono>
+#endif
 
 #include <GLFW/glfw3.h>
 #include <webgpu/webgpu.h>
@@ -255,10 +258,28 @@ static bool init_wgpu(GLFWwindow* window) {
         }
     }
 
+    // Present mode: default to Mailbox (low-latency, tear-free) when available,
+    // fall back to Fifo. Override with WGPU_PRESENT=fifo|mailbox|immediate.
+    WGPUPresentMode present = WGPUPresentMode_Fifo;
+    auto supported = [&](WGPUPresentMode m) {
+        for (size_t i = 0; i < caps.presentModeCount; i++)
+            if (caps.presentModes[i] == m) return true;
+        return false;
+    };
+    if (supported(WGPUPresentMode_Mailbox))
+        present = WGPUPresentMode_Mailbox;
+    if (const char* e = std::getenv("WGPU_PRESENT")) {
+        if (std::strcmp(e, "fifo") == 0) present = WGPUPresentMode_Fifo;
+        else if (std::strcmp(e, "mailbox") == 0) present = WGPUPresentMode_Mailbox;
+        else if (std::strcmp(e, "immediate") == 0) present = WGPUPresentMode_Immediate;
+    }
+    std::fprintf(stderr, "wgpu: %zu present modes; using %d\n", caps.presentModeCount,
+                 (int)present);
+
     g_surface_config.device = g_device;
     g_surface_config.format = fmt;
     g_surface_config.usage = WGPUTextureUsage_RenderAttachment;
-    g_surface_config.presentMode = WGPUPresentMode_Fifo;
+    g_surface_config.presentMode = present;
     g_surface_config.alphaMode = WGPUCompositeAlphaMode_Auto;
     g_surface_config.width = g_surface_w;
     g_surface_config.height = g_surface_h;
@@ -321,6 +342,15 @@ int main(int, char**) {
 
     const ImVec4 clear = ImVec4(0.157f, 0.173f, 0.204f, 1.0f); // Blockbench "ui"
 
+    // Mailbox present doesn't block on vsync, so cap the loop to the monitor's
+    // refresh rate (a bit of headroom) rather than spinning a core at 1000s fps.
+    int refresh = 60;
+    if (GLFWmonitor* mon = glfwGetPrimaryMonitor())
+        if (const GLFWvidmode* vm = glfwGetVideoMode(mon))
+            refresh = vm->refreshRate > 0 ? vm->refreshRate : 60;
+    const double frame_budget = 1.0 / (refresh + 10);
+    double next_frame = glfwGetTime();
+
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
@@ -333,8 +363,14 @@ int main(int, char**) {
         if (w != g_surface_w || h != g_surface_h)
             resize_surface(w, h);
 
+#ifdef BB_PROFILE
+        auto _t0 = std::chrono::high_resolution_clock::now();
+#endif
         WGPUSurfaceTexture surface_texture;
         wgpuSurfaceGetCurrentTexture(g_surface, &surface_texture);
+#ifdef BB_PROFILE
+        auto _t1 = std::chrono::high_resolution_clock::now();
+#endif
         if (ImGui_ImplWGPU_IsSurfaceStatusError(surface_texture.status)) {
             std::fprintf(stderr, "wgpu: surface status %#.8x\n", surface_texture.status);
             std::abort();
@@ -431,14 +467,42 @@ int main(int, char**) {
 
         WGPUCommandBufferDescriptor cmd_desc = {};
         WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(encoder, &cmd_desc);
+#ifdef BB_PROFILE
+        auto _t2 = std::chrono::high_resolution_clock::now();
+#endif
         wgpuQueueSubmit(g_queue, 1, &cmd);
         wgpuSurfacePresent(g_surface);
+        wgpuInstanceProcessEvents(g_instance);
+#ifdef BB_PROFILE
+        auto _t3 = std::chrono::high_resolution_clock::now();
+        static double _acc = 0; static int _n = 0;
+        auto _ms = [](auto a, auto b) {
+            return std::chrono::duration<double, std::milli>(b - a).count();
+        };
+        _acc += _ms(_t0, _t3);
+        if (++_n >= 30) {
+            std::fprintf(stderr,
+                         "frame %.1fms | acquire %.1f build %.1f submit %.1f | draws %d verts %d "
+                         "texupdates %d\n",
+                         _acc / _n, _ms(_t0, _t1), _ms(_t1, _t2), _ms(_t2, _t3),
+                         ImGui::GetDrawData()->CmdListsCount, ImGui::GetDrawData()->TotalVtxCount,
+                         ImGui::GetDrawData()->Textures ? ImGui::GetDrawData()->Textures->Size : -1);
+            _acc = 0; _n = 0;
+        }
+#endif
 
         wgpuCommandBufferRelease(cmd);
         wgpuRenderPassEncoderRelease(pass);
         wgpuCommandEncoderRelease(encoder);
         wgpuTextureViewRelease(view);
         wgpuTextureRelease(surface_texture.texture);
+
+        next_frame += frame_budget;
+        double now = glfwGetTime();
+        if (next_frame > now)
+            ImGui_ImplGlfw_Sleep((int)((next_frame - now) * 1000.0));
+        else
+            next_frame = now; // fell behind — don't accumulate debt
     }
 
     ImGui_ImplWGPU_Shutdown();

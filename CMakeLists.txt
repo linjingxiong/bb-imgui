@@ -121,6 +121,11 @@ if(MSVC)
     target_compile_options(imgui PRIVATE /utf-8)
 endif()
 
+option(BB_PROFILE "Print per-frame timing breakdown to stderr" OFF)
+if(BB_PROFILE)
+    target_compile_definitions(bb_imgui PRIVATE BB_PROFILE)
+endif()
+
 # Assets next to the binary.
 add_custom_command(TARGET bb_imgui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

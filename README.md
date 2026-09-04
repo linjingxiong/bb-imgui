@@ -52,5 +52,9 @@ next to the binary at build time.
 - ImGui `size_pixels` maps the font's ascent-to-descent height to N px, while CSS
   `font-size` maps the em square. For Assistant the factor is ~1.308, so every
   Blockbench CSS px is multiplied by that in `theme::size`.
-- A borderless window that is fully occluded is throttled to ~10 fps by Windows
-  DWM; that is not the app being slow (per-frame CPU cost is ~1 ms).
+- The renderer uses `WGPUPresentMode_Mailbox` (when supported). On some
+  NVIDIA + wgpu-native builds `Fifo` makes `wgpuSurfaceGetCurrentTexture` block
+  ~90 ms per frame; Mailbox does not. The loop is then capped to the monitor
+  refresh rate. Force a mode with `WGPU_PRESENT=fifo|mailbox|immediate`.
+- Per-frame CPU cost is ~1 ms — build with `-DBB_PROFILE=ON` for a stderr
+  breakdown.
