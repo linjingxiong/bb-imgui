@@ -92,6 +92,16 @@ void Playback::pause() {
 
 void Playback::toggle() { playing_.load() ? pause() : play(); }
 
+void Playback::set_speed(float x) {
+    x = std::clamp(x, 0.25f, 8.0f);
+    // Re-anchor the virtual clock so the displayed position doesn't jump.
+    uint64_t now = current_time_us();
+    speed_.store(x);
+    std::lock_guard<std::mutex> lk(clock_mutex_);
+    clock_base_us_ = now;
+    wall_anchor_ = std::chrono::steady_clock::now();
+}
+
 void Playback::seek(uint64_t timestamp_us) {
     if (!reader_.is_open()) return;
     uint64_t clamped = std::clamp(timestamp_us, reader_.start_time_us(), reader_.end_time_us());
@@ -110,8 +120,8 @@ uint64_t Playback::current_time_us() const {
     std::lock_guard<std::mutex> lk(clock_mutex_);
     if (!playing_.load()) return clock_base_us_;
     auto elapsed = std::chrono::steady_clock::now() - wall_anchor_;
-    uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
-    uint64_t t = clock_base_us_ + us;
+    double us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    uint64_t t = clock_base_us_ + (uint64_t)(us * speed_.load());
     return std::min(t, reader_.end_time_us());
 }
 
@@ -293,7 +303,8 @@ void Playback::playback_loop() {
                 rec_anchor_us = msg.timestamp_us;
                 rec_elapsed_us = 0;
             }
-            auto target = wall_anchor + std::chrono::microseconds(rec_elapsed_us);
+            int64_t wall_us = (int64_t)(rec_elapsed_us / speed_.load());
+            auto target = wall_anchor + std::chrono::microseconds(wall_us);
             auto now = clock::now();
             if (target - now >= std::chrono::microseconds(kMinSleepUs))
                 std::this_thread::sleep_for(target - now);

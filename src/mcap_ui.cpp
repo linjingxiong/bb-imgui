@@ -180,7 +180,8 @@ void inspector() {
     ImGui::PopFont();
 }
 
-// A slim multi-line plot of one IMU topic's recent x/y/z history.
+// A scrolling x/y/z plot of one IMU topic — a fixed time window ending at
+// the current playback position (a "now" line at the right edge).
 void imu_plot(const std::string& topic, float height) {
     const theme::Palette& p = theme::palette();
     auto hist = g_pb->imu_history(topic);
@@ -190,31 +191,48 @@ void imu_plot(const std::string& topic, float height) {
     dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + height), u32(p.deep), theme::RADIUS);
     dl->AddRect(pos, ImVec2(pos.x + w, pos.y + height), u32(p.border), theme::RADIUS);
 
+    const uint64_t now = g_pb->current_time_us();
+    const uint64_t window_us = 6'000'000;
+    const uint64_t win_start = now > window_us ? now - window_us : 0;
+
     ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
-    dl->AddText(ImVec2(pos.x + 6, pos.y + 4), u32(p.subtle_text), short_topic(topic));
+    auto latest = g_pb->imu_latest(topic);
+    char hdr[96];
+    std::snprintf(hdr, sizeof(hdr), "%s    %.3f  %.3f  %.3f", short_topic(topic), latest.x,
+                  latest.y, latest.z);
+    dl->AddText(ImVec2(pos.x + 6, pos.y + 4), u32(p.subtle_text), hdr);
     ImGui::PopFont();
 
-    if (hist.size() >= 2) {
-        double mn = 1e300, mx = -1e300;
-        for (auto& s : hist) {
-            mn = std::min({mn, s.x, s.y, s.z});
-            mx = std::max({mx, s.x, s.y, s.z});
-        }
-        if (mx - mn < 1e-6) { mx += 1; mn -= 1; }
-        auto Y = [&](double v) {
-            return pos.y + height - 4 - (float)((v - mn) / (mx - mn)) * (height - 8);
-        };
-        const ImU32 cols[3] = {u32(theme::axis::X), u32(theme::axis::Y), u32(theme::axis::Z)};
-        for (int axis = 0; axis < 3; ++axis) {
-            for (size_t i = 1; i < hist.size(); ++i) {
-                float x0 = pos.x + w * (float)(i - 1) / (hist.size() - 1);
-                float x1 = pos.x + w * (float)i / (hist.size() - 1);
-                double v0 = axis == 0 ? hist[i - 1].x : axis == 1 ? hist[i - 1].y : hist[i - 1].z;
-                double v1 = axis == 0 ? hist[i].x : axis == 1 ? hist[i].y : hist[i].z;
-                dl->AddLine(ImVec2(x0, Y(v0)), ImVec2(x1, Y(v1)), cols[axis], 1.0f);
-            }
+    double mn = 1e300, mx = -1e300;
+    for (auto& s : hist) {
+        if (s.t_us < win_start || s.t_us > now) continue;
+        mn = std::min({mn, s.x, s.y, s.z});
+        mx = std::max({mx, s.x, s.y, s.z});
+    }
+    if (mx < mn) { mn = -1; mx = 1; }
+    if (mx - mn < 1e-6) { mx += 1; mn -= 1; }
+    auto X = [&](uint64_t t) {
+        return pos.x + w * (float)((double)(t - win_start) / (double)window_us);
+    };
+    auto Y = [&](double v) {
+        return pos.y + height - 4 - (float)((v - mn) / (mx - mn)) * (height - 16);
+    };
+    const ImU32 cols[3] = {u32(theme::axis::X), u32(theme::axis::Y), u32(theme::axis::Z)};
+    for (int axis = 0; axis < 3; ++axis) {
+        bool have_prev = false;
+        ImVec2 prev;
+        for (const auto& s : hist) {
+            if (s.t_us < win_start || s.t_us > now) { have_prev = false; continue; }
+            double v = axis == 0 ? s.x : axis == 1 ? s.y : s.z;
+            ImVec2 pt(X(s.t_us), Y(v));
+            if (have_prev) dl->AddLine(prev, pt, cols[axis], 1.0f);
+            prev = pt;
+            have_prev = true;
         }
     }
+    // "now" line at the right edge.
+    dl->AddLine(ImVec2(pos.x + w - 1, pos.y), ImVec2(pos.x + w - 1, pos.y + height),
+                u32(p.subtle_text), 1.0f);
     ImGui::Dummy(ImVec2(w, height));
 }
 
@@ -337,6 +355,16 @@ void timeline() {
 
     ImGui::SameLine(0, 12);
     if (bb::icon_button(ICON_ROTATE)) g_rotation = (g_rotation + 90) % 360;
+
+    ImGui::SameLine(0, 4);
+    static const float SPEEDS[] = {0.5f, 1.0f, 2.0f, 4.0f};
+    char sp[8];
+    std::snprintf(sp, sizeof(sp), "%gx", pb.speed());
+    if (bb::button(sp)) {
+        int i = 0;
+        for (; i < 4; ++i) if (SPEEDS[i] == pb.speed()) break;
+        pb.set_speed(SPEEDS[(i + 1) % 4]);
+    }
 
     ImGui::EndChild();
     ImGui::PopStyleColor();

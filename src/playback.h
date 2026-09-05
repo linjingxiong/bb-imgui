@@ -41,6 +41,9 @@ public:
     void toggle();
     void seek(uint64_t timestamp_us);
 
+    void set_speed(float x); // 0.25 .. 8
+    float speed() const { return speed_.load(); }
+
     bool playing() const { return playing_.load(); }
     uint64_t start_time_us() const { return reader_.start_time_us(); }
     uint64_t end_time_us() const { return reader_.end_time_us(); }
@@ -91,6 +94,7 @@ private:
     std::thread thread_;
     std::atomic<bool> should_stop_{false};
     std::atomic<bool> playing_{false};
+    std::atomic<float> speed_{1.0f};
     std::atomic<bool> seek_pending_{false};
     std::atomic<uint64_t> pending_seek_us_{0};
     std::atomic<uint64_t> current_time_us_{0};
