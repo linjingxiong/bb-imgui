@@ -9,12 +9,17 @@
 
 #include "imgui.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX // keep the windows.h min/max macros from breaking std::min({...})
+#endif
 #include <windows.h>
 #include <commdlg.h>
 #endif
@@ -26,8 +31,27 @@ WGPUDevice g_device = nullptr;
 WGPUQueue g_queue = nullptr;
 std::unique_ptr<mp::Playback> g_pb;
 std::map<std::string, std::unique_ptr<mp::VideoTexture>> g_textures;
+std::string g_selected_topic;
+int g_rotation = 90; // degrees CW — the Ego device's cameras are mounted sideways
 
 ImU32 u32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
+
+// Draw a texture into `size` at the current cursor, rotated `rot` degrees CW.
+void draw_video(ImVec2 size, ImTextureID tex, int rot) {
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImVec2 a(p0.x, p0.y), b(p0.x + size.x, p0.y);
+    ImVec2 c(p0.x + size.x, p0.y + size.y), d(p0.x, p0.y + size.y);
+    ImVec2 uv0(0, 0), uv1(1, 0), uv2(1, 1), uv3(0, 1);
+    switch (((rot % 360) + 360) % 360) {
+        case 90:  uv0 = {0, 1}; uv1 = {0, 0}; uv2 = {1, 0}; uv3 = {1, 1}; break;
+        case 180: uv0 = {1, 1}; uv1 = {0, 1}; uv2 = {0, 0}; uv3 = {1, 0}; break;
+        case 270: uv0 = {1, 0}; uv1 = {1, 1}; uv2 = {0, 1}; uv3 = {0, 0}; break;
+        default: break;
+    }
+    ImGui::GetWindowDrawList()->AddImageQuad(tex, a, b, c, d, uv0, uv1, uv2, uv3,
+                                             IM_COL32_WHITE);
+    ImGui::Dummy(size);
+}
 
 void fmt_time(char* buf, size_t n, uint64_t us) {
     uint64_t total_ms = us / 1000;
@@ -107,12 +131,14 @@ void topic_tree() {
     }
 
     for (const auto& t : g_pb->topics()) {
-        bool is_video = false;
-        for (const auto& vt : g_pb->video_topics())
-            if (vt == t) { is_video = true; break; }
         char cnt[24];
         std::snprintf(cnt, sizeof(cnt), "%llu", (unsigned long long)g_pb->message_count(t));
-        bb::outliner_node(t.c_str(), /*leaf=*/true, /*selected=*/false, nullptr, t.c_str());
+        bool sel = (t == g_selected_topic);
+        if (bb::outliner_node(t.c_str(), /*leaf=*/true, sel, nullptr, t.c_str()))
+            g_selected_topic = t;
+        // outliner_node returns true only for non-leaf toggles; catch the
+        // click on a leaf row via the last item.
+        if (ImGui::IsItemClicked()) g_selected_topic = t;
         ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
         ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
         ImVec2 ts = ImGui::CalcTextSize(cnt);
@@ -120,8 +146,88 @@ void topic_tree() {
             ImVec2(rmax.x - ts.x - 24.0f, rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f),
             u32(p.subtle_text), cnt);
         ImGui::PopFont();
-        (void)is_video;
     }
+}
+
+void inspector() {
+    const theme::Palette& p = theme::palette();
+    bb::field_label("INSPECTOR");
+    ImGui::Dummy(ImVec2(0, 4));
+    if (!has_file()) {
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::TextColored(p.subtle_text, "Open a recording, then pick a topic.");
+        ImGui::PopFont();
+        return;
+    }
+    if (g_selected_topic.empty()) {
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::TextColored(p.subtle_text, "Select a topic on the left.");
+        ImGui::PopFont();
+        return;
+    }
+    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+    ImGui::TextUnformatted(g_selected_topic.c_str());
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    std::string summary = g_pb->latest_summary(g_selected_topic);
+    ImGui::TextColored(p.text, "%s", summary.empty() ? "(no message yet)" : summary.c_str());
+    ImGui::Dummy(ImVec2(0, 4));
+    char cnt[48];
+    std::snprintf(cnt, sizeof(cnt), "%llu messages dispatched",
+                  (unsigned long long)g_pb->message_count(g_selected_topic));
+    ImGui::TextColored(p.subtle_text, "%s", cnt);
+    ImGui::PopFont();
+}
+
+// A slim multi-line plot of one IMU topic's recent x/y/z history.
+void imu_plot(const std::string& topic, float height) {
+    const theme::Palette& p = theme::palette();
+    auto hist = g_pb->imu_history(topic);
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + height), u32(p.deep), theme::RADIUS);
+    dl->AddRect(pos, ImVec2(pos.x + w, pos.y + height), u32(p.border), theme::RADIUS);
+
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
+    dl->AddText(ImVec2(pos.x + 6, pos.y + 4), u32(p.subtle_text), short_topic(topic));
+    ImGui::PopFont();
+
+    if (hist.size() >= 2) {
+        double mn = 1e300, mx = -1e300;
+        for (auto& s : hist) {
+            mn = std::min({mn, s.x, s.y, s.z});
+            mx = std::max({mx, s.x, s.y, s.z});
+        }
+        if (mx - mn < 1e-6) { mx += 1; mn -= 1; }
+        auto Y = [&](double v) {
+            return pos.y + height - 4 - (float)((v - mn) / (mx - mn)) * (height - 8);
+        };
+        const ImU32 cols[3] = {u32(theme::axis::X), u32(theme::axis::Y), u32(theme::axis::Z)};
+        for (int axis = 0; axis < 3; ++axis) {
+            for (size_t i = 1; i < hist.size(); ++i) {
+                float x0 = pos.x + w * (float)(i - 1) / (hist.size() - 1);
+                float x1 = pos.x + w * (float)i / (hist.size() - 1);
+                double v0 = axis == 0 ? hist[i - 1].x : axis == 1 ? hist[i - 1].y : hist[i - 1].z;
+                double v1 = axis == 0 ? hist[i].x : axis == 1 ? hist[i].y : hist[i].z;
+                dl->AddLine(ImVec2(x0, Y(v0)), ImVec2(x1, Y(v1)), cols[axis], 1.0f);
+            }
+        }
+    }
+    ImGui::Dummy(ImVec2(w, height));
+}
+
+void imu_plots() {
+    if (!has_file()) return;
+    bool any = false;
+    for (const auto& t : g_pb->topics()) {
+        if (t.rfind("/imu/", 0) != 0) continue;
+        any = true;
+        imu_plot(t, 90.0f);
+        ImGui::Dummy(ImVec2(0, 6));
+    }
+    (void)any;
 }
 
 void video_grid() {
@@ -150,6 +256,8 @@ void video_grid() {
     float spacing = 6.0f;
     float cell_w = (avail - spacing * (cols - 1)) / cols;
 
+    bool rot90 = (((g_rotation % 360) + 360) % 360) % 180 != 0;
+
     for (size_t i = 0; i < vts.size(); ++i) {
         const std::string& topic = vts[i];
         if (i % cols != 0) ImGui::SameLine(0, spacing);
@@ -158,9 +266,11 @@ void video_grid() {
         if (!tex) tex = std::make_unique<mp::VideoTexture>(g_device, g_queue);
         if (auto frame = g_pb->latest_frame(topic)) tex->update(frame);
 
-        float cell_h = tex->valid() && tex->width() > 0
-                           ? cell_w * (float)tex->height() / (float)tex->width()
-                           : cell_w * 9.0f / 16.0f;
+        // Aspect ratio follows the *displayed* orientation.
+        float disp_w = rot90 ? (float)tex->height() : (float)tex->width();
+        float disp_h = rot90 ? (float)tex->width() : (float)tex->height();
+        float cell_h = tex->valid() && disp_w > 0 ? cell_w * disp_h / disp_w
+                                                  : cell_w * 9.0f / 16.0f;
 
         ImGui::BeginChild((topic + "##vid").c_str(), ImVec2(cell_w, cell_h + 22.0f),
                           ImGuiChildFlags_Borders);
@@ -168,7 +278,7 @@ void video_grid() {
         ImGui::TextUnformatted(short_topic(topic));
         ImGui::PopFont();
         if (tex->valid())
-            ImGui::Image(tex->id(), ImVec2(cell_w - 4.0f, cell_h));
+            draw_video(ImVec2(cell_w - 4.0f, cell_h), tex->id(), g_rotation);
         else
             ImGui::Dummy(ImVec2(cell_w - 4.0f, cell_h));
         ImGui::EndChild();
@@ -224,6 +334,9 @@ void timeline() {
     ImGui::PushFont(nullptr, theme::size::SMALL);
     ImGui::TextColored(p.subtle_text, "%s", t_end);
     ImGui::PopFont();
+
+    ImGui::SameLine(0, 12);
+    if (bb::icon_button(ICON_ROTATE)) g_rotation = (g_rotation + 90) % 360;
 
     ImGui::EndChild();
     ImGui::PopStyleColor();

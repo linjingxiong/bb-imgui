@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -56,6 +57,17 @@ public:
     // (cheap "activity" indicator for the topic tree).
     uint64_t message_count(const std::string& topic);
 
+    // One IMU sample (accel or gyro), in the file's own units.
+    struct ImuSample { uint64_t t_us; double x, y, z; };
+    // A rolling window of recent samples for an "/imu/*" topic (oldest
+    // first, capped). Copy-returned — safe to iterate without holding a lock.
+    std::vector<ImuSample> imu_history(const std::string& topic);
+    ImuSample imu_latest(const std::string& topic);
+
+    // A short human-readable summary of the latest message on `topic`
+    // (values for IMU, WxH/codec/frame_id for video, format/rate for audio).
+    std::string latest_summary(const std::string& topic);
+
 private:
     void stop_thread();
     void playback_loop();
@@ -72,6 +84,9 @@ private:
     std::mutex frames_mutex_;
     std::map<std::string, VideoFramePtr> latest_frames_;
     std::map<std::string, uint64_t> msg_counts_;
+    std::map<std::string, std::deque<ImuSample>> imu_hist_;
+    std::map<std::string, std::string> latest_summary_;
+    static constexpr size_t kImuHistCap = 8000;
 
     std::thread thread_;
     std::atomic<bool> should_stop_{false};

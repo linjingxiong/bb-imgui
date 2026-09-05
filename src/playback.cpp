@@ -1,12 +1,16 @@
 #include "playback.h"
 
+#include "mcap_reader.h"
+
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 
 namespace mp {
 
 namespace {
 bool is_video_topic(const std::string& t) { return t.rfind("/camera/", 0) == 0; }
+bool is_imu_topic(const std::string& t) { return t.rfind("/imu/", 0) == 0; }
 } // namespace
 
 Playback::Playback() = default;
@@ -55,6 +59,8 @@ void Playback::close() {
     std::lock_guard<std::mutex> lk(frames_mutex_);
     latest_frames_.clear();
     msg_counts_.clear();
+    imu_hist_.clear();
+    latest_summary_.clear();
 }
 
 void Playback::stop_thread() {
@@ -121,12 +127,62 @@ uint64_t Playback::message_count(const std::string& topic) {
     return it == msg_counts_.end() ? 0 : it->second;
 }
 
+std::vector<Playback::ImuSample> Playback::imu_history(const std::string& topic) {
+    std::lock_guard<std::mutex> lk(frames_mutex_);
+    auto it = imu_hist_.find(topic);
+    if (it == imu_hist_.end()) return {};
+    return {it->second.begin(), it->second.end()};
+}
+
+Playback::ImuSample Playback::imu_latest(const std::string& topic) {
+    std::lock_guard<std::mutex> lk(frames_mutex_);
+    auto it = imu_hist_.find(topic);
+    if (it == imu_hist_.end() || it->second.empty()) return {0, 0, 0, 0};
+    return it->second.back();
+}
+
+std::string Playback::latest_summary(const std::string& topic) {
+    std::lock_guard<std::mutex> lk(frames_mutex_);
+    auto it = latest_summary_.find(topic);
+    return it == latest_summary_.end() ? std::string() : it->second;
+}
+
 void Playback::dispatch(const McapMessage& msg) {
     {
         std::lock_guard<std::mutex> lk(frames_mutex_);
         msg_counts_[msg.topic]++;
     }
-    if (!is_video_topic(msg.topic)) return;
+
+    if (is_imu_topic(msg.topic)) {
+        DecodedImuSample s;
+        if (!decode_imu_sample(msg.data, s)) return;
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "x %.4f   y %.4f   z %.4f", s.x, s.y, s.z);
+        std::lock_guard<std::mutex> lk(frames_mutex_);
+        auto& dq = imu_hist_[msg.topic];
+        dq.push_back({s.timestamp_us ? s.timestamp_us : msg.timestamp_us, s.x, s.y, s.z});
+        while (dq.size() > kImuHistCap) dq.pop_front();
+        latest_summary_[msg.topic] = buf;
+        return;
+    }
+
+    if (msg.topic == "/audio") {
+        DecodedRawAudio a;
+        if (!decode_raw_audio(msg.data, a)) return;
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "%s  %u Hz  %u ch  %zu bytes", a.format.c_str(),
+                      a.sample_rate, a.channels, a.data.size());
+        std::lock_guard<std::mutex> lk(frames_mutex_);
+        latest_summary_[msg.topic] = buf;
+        return;
+    }
+
+    if (!is_video_topic(msg.topic)) {
+        std::lock_guard<std::mutex> lk(frames_mutex_);
+        latest_summary_[msg.topic] = msg.schema_name.empty() ? msg.message_encoding
+                                                             : msg.schema_name;
+        return;
+    }
 
     auto dit = decoders_.find(msg.topic);
     if (dit == decoders_.end()) return;
@@ -143,13 +199,23 @@ void Playback::dispatch(const McapMessage& msg) {
     auto frame = dit->second->decode(v.format, v.data.data(), (int)v.data.size());
     if (frame) {
         frame->timestamp_us = v.timestamp_us;
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "%dx%d  %s  '%s'", frame->width, frame->height,
+                      v.format.c_str(), v.frame_id.c_str());
         std::lock_guard<std::mutex> lk(frames_mutex_);
         latest_frames_[msg.topic] = frame;
+        latest_summary_[msg.topic] = buf;
     }
 }
 
 void Playback::do_seek_catchup(uint64_t target_us) {
     for (auto& [_, d] : decoders_) d->reset();
+    {
+        // Rebuild IMU history cleanly for the window around the new position
+        // (a backward seek would otherwise leave stale future samples).
+        std::lock_guard<std::mutex> lk(frames_mutex_);
+        imu_hist_.clear();
+    }
     uint64_t from_us = reader_.seekable_start_time_us(target_us);
     if (from_us > target_us) from_us = target_us;
 

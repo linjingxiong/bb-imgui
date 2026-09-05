@@ -436,17 +436,14 @@ int main(int argc, char** argv) {
                 mcap_ui::timeline();
                 ImGui::Dummy(ImVec2(0, 6));
                 mcap_ui::video_grid();
+                ImGui::Dummy(ImVec2(0, 8));
+                mcap_ui::imu_plots();
             }
         }
         bb::end_panel();
 
         if (bb::begin_panel("Right", false)) {
-            bb::field_label("INSPECTOR");
-            ImGui::Dummy(ImVec2(0, 4));
-            ImGui::PushFont(nullptr, theme::size::SMALL);
-            ImGui::TextColored(theme::palette().subtle_text,
-                               "Raw message / plot panels: next batch.");
-            ImGui::PopFont();
+            if (!gallery_open) mcap_ui::inspector();
         }
         bb::end_panel();
 

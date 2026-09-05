@@ -23,7 +23,9 @@ void open_path(const char* utf8_path);
 
 // Panel bodies — call inside the corresponding bb::begin_panel/end_panel.
 void topic_tree();   // Left panel
+void inspector();    // Right panel — selected topic's latest message
 void video_grid();   // Workspace panel
+void imu_plots();    // Workspace panel — x/y/z history for each /imu/* topic
 void timeline();     // a slim bar (call above the dockspace or in Workspace)
 
 bool has_file();
