@@ -15,6 +15,7 @@
 #include "gallery.h"
 #include "icons.h"
 #include "logo.h"
+#include "mcap_ui.h"
 #include "menu.h"
 #include "shell.h"
 #include "theme.h"
@@ -289,7 +290,7 @@ static bool init_wgpu(GLFWwindow* window) {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-int main(int, char**) {
+int main(int argc, char** argv) {
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit())
         return 1;
@@ -319,19 +320,11 @@ int main(int, char**) {
     fonts::install(1.0f);
 
     static const shell::ProjectTab tabs[] = {
-        {"MB Trac", false}, {"Fire Station", false}, {"planks", true},
+        {"MCAP Player", false},
     };
     shell::set_tabs(tabs, (int)(sizeof(tabs) / sizeof(tabs[0])));
     shell::set_menus(MENUS, (int)(sizeof(MENUS) / sizeof(MENUS[0])));
-    bool gallery_open = false;
-
-    // Placeholder Transform/Outliner state (this branch is a static UI shell
-    // — no real model data, see the "blockbench-pixel-perfect" plan).
-    double t_position[3] = {0.168, -14.4113, 99.8973};
-    double t_size[3] = {8, 84, 8};
-    double t_pivot[3] = {0, 52.5, 110};
-    double t_rotation[3] = {-25.5305, 11.3125, -3.5525};
-    bool vis_cube1 = true, vis_cube2 = true, vis_claw_cube[5] = {true, true, true, true, true};
+    bool gallery_open = false; // dev: View > Component gallery still toggles the widget browser
 
     ImGui_ImplGlfw_InitForOther(window, true);
     ImGui_ImplWGPU_InitInfo init_info;
@@ -342,6 +335,8 @@ int main(int, char**) {
     ImGui_ImplWGPU_Init(&init_info);
 
     logo::load(g_device, g_queue, 19.0f); // Blockbench wordmark for the title bar
+    mcap_ui::init(g_device, g_queue);
+    if (argc > 1) mcap_ui::open_path(argv[1]); // CLI: bb_imgui <file.mcap>
 
     const ImVec4 clear = ImVec4(0.157f, 0.173f, 0.204f, 1.0f); // Blockbench "ui"
 
@@ -408,6 +403,8 @@ int main(int, char**) {
         if (const char* a = shell::menu_clicked()) {
             if (std::strstr(a, "Component gallery"))
                 gallery_open = !gallery_open;
+            else if (std::strstr(a, "Open MCAP") || std::strstr(a, "Open Model"))
+                mcap_ui::open_dialog();
         }
 
         // Toolbar row: panel name (left) + a few representative Blockbench
@@ -424,28 +421,8 @@ int main(int, char**) {
         shell::toolbar_end();
 
         if (bb::begin_panel("Left", false)) {
-            if (gallery_open) {
-                gallery::list();
-            } else {
-                // UV editor placeholder: a checkerboard canvas standing in
-                // for the real UV-mapped texture view (no real UV data in
-                // this shell-only branch).
-                float w = ImGui::GetContentRegionAvail().x;
-                bb::checkerboard(ImVec2(w, w * 0.62f), 8.0f);
-                ImGui::Dummy(ImVec2(0, 10));
-
-                bb::field_label("TEXTURES");
-                ImGui::Dummy(ImVec2(0, 4));
-                static bool tex_sel[2] = {true, false};
-                if (bb::texture_row("mb_trac.png", "256 x 256px (16x)",
-                                    ImVec4(0.55f, 0.45f, 0.30f, 1.0f), tex_sel[0])) {
-                    tex_sel[0] = true; tex_sel[1] = false;
-                }
-                if (bb::texture_row("trailer.png", "256 x 256px (16x)",
-                                    ImVec4(0.65f, 0.15f, 0.12f, 1.0f), tex_sel[1])) {
-                    tex_sel[0] = false; tex_sel[1] = true;
-                }
-            }
+            if (gallery_open) gallery::list();
+            else mcap_ui::topic_tree();
         }
         bb::end_panel();
 
@@ -453,24 +430,22 @@ int main(int, char**) {
             if (gallery_open) {
                 gallery::detail();
             } else {
-                bb::viewport_placeholder(ImGui::GetContentRegionAvail());
+                mcap_ui::timeline();
+                ImGui::Dummy(ImVec2(0, 6));
+                mcap_ui::video_grid();
             }
         }
         bb::end_panel();
 
         if (bb::begin_panel("Right", false)) {
-            bb::field_label("TRANSFORM");
-            ImGui::Dummy(ImVec2(0, 2));
-            bb::transform_row("Position", t_position);
-            bb::transform_row("Size", t_size);
-            bb::transform_row("Pivot Point", t_pivot);
-            bb::transform_row("Rotation", t_rotation);
-            ImGui::Dummy(ImVec2(0, 10));
-
-            bb::field_label("OUTLINER");
-            ImGui::Dummy(ImVec2(0, 2));
-            if (bb::outliner_node("cube", true, false, &vis_cube1)) bb::outliner_pop();
-            if (bb::outliner_node("cube", true, false, &vis_cube2)) bb::outliner_pop();
+            bb::field_label("INSPECTOR");
+            ImGui::Dummy(ImVec2(0, 4));
+            ImGui::PushFont(nullptr, theme::size::SMALL);
+            ImGui::TextColored(theme::palette().subtle_text,
+                               "Raw message / plot panels: next batch.");
+            ImGui::PopFont();
+#if 0
+            // Blockbench-branch demo content, kept for reference only.
             if (bb::outliner_node("crane_arm_2", false, false, nullptr)) {
                 ImGui::Indent(16);
                 for (int i = 0; i < 3; i++)
@@ -486,6 +461,7 @@ int main(int, char**) {
                 ImGui::Unindent(16);
                 bb::outliner_pop();
             }
+#endif
         }
         bb::end_panel();
 
@@ -558,6 +534,7 @@ int main(int, char**) {
             next_frame = now; // fell behind — don't accumulate debt
     }
 
+    mcap_ui::shutdown();
     ImGui_ImplWGPU_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

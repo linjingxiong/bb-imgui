@@ -109,6 +109,25 @@ target_compile_definitions(imgui PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
 target_link_libraries(imgui PUBLIC glfw wgpu_native)
 
 # ---------------------------------------------------------------------------
+# MCAP (header-only) + FFmpeg (prebuilt, Windows) — for the mcap-player branch.
+# FFmpeg binaries live in third_party/ffmpeg (git-ignored, ~220MB) — copy them
+# from D:/Ego/EgoViewer/third_party/ffmpeg before building this branch.
+# ---------------------------------------------------------------------------
+add_library(mcap INTERFACE)
+target_include_directories(mcap INTERFACE ${CMAKE_SOURCE_DIR}/third_party/mcap/include)
+target_compile_definitions(mcap INTERFACE MCAP_COMPRESSION_NO_LZ4 MCAP_COMPRESSION_NO_ZSTD)
+
+set(FFMPEG_ROOT ${CMAKE_SOURCE_DIR}/third_party/ffmpeg/windows)
+add_library(ffmpeg INTERFACE)
+target_include_directories(ffmpeg INTERFACE ${FFMPEG_ROOT}/include)
+target_link_libraries(ffmpeg INTERFACE
+    ${FFMPEG_ROOT}/lib/x64/avcodec.lib
+    ${FFMPEG_ROOT}/lib/x64/avformat.lib
+    ${FFMPEG_ROOT}/lib/x64/avutil.lib
+    ${FFMPEG_ROOT}/lib/x64/swscale.lib
+    ${FFMPEG_ROOT}/lib/x64/swresample.lib)
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 add_executable(bb_imgui
@@ -120,8 +139,17 @@ add_executable(bb_imgui
     src/bb.cpp
     src/gallery.cpp
     src/logo.cpp
+    src/mcap_reader.cpp
+    src/video_decoder.cpp
+    src/playback.cpp
+    src/video_texture.cpp
+    src/mcap_ui.cpp
 )
-target_link_libraries(bb_imgui PRIVATE imgui glfw wgpu_native nlohmann_json::nlohmann_json)
+target_link_libraries(bb_imgui PRIVATE imgui glfw wgpu_native nlohmann_json::nlohmann_json
+    mcap ffmpeg)
+if(WIN32)
+    target_link_libraries(bb_imgui PRIVATE comdlg32) # GetOpenFileNameW
+endif()
 
 if(MSVC)
     target_compile_options(bb_imgui PRIVATE /utf-8)
@@ -138,3 +166,11 @@ add_custom_command(TARGET bb_imgui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:bb_imgui>/assets
     VERBATIM)
+
+# FFmpeg runtime DLLs next to the binary.
+foreach(dll avcodec-58 avformat-58 avutil-56 swscale-5 swresample-3)
+    add_custom_command(TARGET bb_imgui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${FFMPEG_ROOT}/lib/x64/${dll}.dll $<TARGET_FILE_DIR:bb_imgui>/${dll}.dll
+        VERBATIM)
+endforeach()

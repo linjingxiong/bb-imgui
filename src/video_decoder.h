@@ -1,0 +1,43 @@
+// Qt-free port of EgoViewer's src/data/FfmpegVideoDecoder.{h,cpp}. H.264/
+// H.265 packet decoder — one instance per video stream. The seek-time
+// "decode a chain of frames but only convert the last one" optimisation
+// (decode_discard) is carried over verbatim.
+#pragma once
+
+#include "video_frame.h"
+
+#include <mutex>
+#include <string>
+
+struct AVCodecContext;
+struct AVCodec;
+struct AVFrame;
+
+namespace mp {
+
+class VideoDecoder {
+public:
+    VideoDecoder();
+    ~VideoDecoder();
+
+    // `codec` is "h264" / "h265" / "hevc" (from the CompressedVideo message).
+    VideoFramePtr decode(const std::string& codec, const uint8_t* data, int size);
+    // Advances the decoder's reference-frame state through this packet but
+    // skips the (allocation + full copy) conversion to a VideoFrame.
+    void decode_discard(const std::string& codec, const uint8_t* data, int size);
+
+    void reset();
+    void flush(); // resync at next keyframe, keeping parsed SPS/PPS
+
+private:
+    bool ensure_codec(const std::string& codec);
+    VideoFramePtr frame_to_buffer(const AVFrame* frame) const;
+
+    std::mutex mutex_;
+    int codec_id_ = 0; // AVCodecID
+    const AVCodec* codec_ = nullptr;
+    AVCodecContext* ctx_ = nullptr;
+    int decode_error_count_ = 0;
+};
+
+} // namespace mp

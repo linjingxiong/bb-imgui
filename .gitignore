@@ -1,6 +1,11 @@
 /build/
 /out/
 /dist/
+# FFmpeg binaries are ~220MB — too large to commit. Copy
+# third_party/ffmpeg/windows from D:/Ego/EgoViewer (or a fresh FFmpeg 4.x
+# build with the same avcodec-58/avformat-58/avutil-56/swscale-5/
+# swresample-3 ABI) before building the mcap-player-foxglove branch.
+/third_party/ffmpeg/
 *.user
 .vs/
 .cache/

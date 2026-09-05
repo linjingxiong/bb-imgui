@@ -1,0 +1,248 @@
+#include "playback.h"
+
+#include <algorithm>
+#include <chrono>
+
+namespace mp {
+
+namespace {
+bool is_video_topic(const std::string& t) { return t.rfind("/camera/", 0) == 0; }
+} // namespace
+
+Playback::Playback() = default;
+Playback::~Playback() { close(); }
+
+bool Playback::open(const std::string& path) {
+    close();
+    if (!reader_.open(path)) return false;
+    path_ = path;
+
+    auto topic_set = reader_.topics_with_messages();
+    topics_.assign(topic_set.begin(), topic_set.end());
+    std::sort(topics_.begin(), topics_.end());
+    video_topics_.clear();
+    for (const auto& t : topics_)
+        if (is_video_topic(t)) video_topics_.push_back(t);
+
+    for (const auto& t : video_topics_)
+        decoders_[t] = std::make_unique<VideoDecoder>();
+
+    current_time_us_.store(reader_.start_time_us());
+    {
+        std::lock_guard<std::mutex> lk(clock_mutex_);
+        clock_base_us_ = reader_.start_time_us();
+        wall_anchor_ = std::chrono::steady_clock::now();
+    }
+    should_stop_.store(false);
+    seek_pending_.store(false);
+    playing_.store(false);
+
+    thread_ = std::thread(&Playback::playback_loop, this);
+    // Decode the frame at the start position right away so the video panels
+    // aren't blank before the first play (Foxglove shows the current frame
+    // even while paused).
+    seek(reader_.start_time_us());
+    return true;
+}
+
+void Playback::close() {
+    stop_thread();
+    reader_.close();
+    decoders_.clear();
+    path_.clear();
+    topics_.clear();
+    video_topics_.clear();
+    std::lock_guard<std::mutex> lk(frames_mutex_);
+    latest_frames_.clear();
+    msg_counts_.clear();
+}
+
+void Playback::stop_thread() {
+    should_stop_.store(true);
+    playing_.store(false);
+    pause_cv_.notify_all();
+    if (thread_.joinable()) thread_.join();
+    should_stop_.store(false);
+}
+
+void Playback::play() {
+    if (!reader_.is_open() || playing_.load()) return;
+    {
+        std::lock_guard<std::mutex> lk(clock_mutex_);
+        clock_base_us_ = current_time_us_.load();
+        wall_anchor_ = std::chrono::steady_clock::now();
+    }
+    playing_.store(true);
+    pause_cv_.notify_all();
+}
+
+void Playback::pause() {
+    if (!playing_.load()) return;
+    uint64_t now = current_time_us();
+    playing_.store(false);
+    std::lock_guard<std::mutex> lk(clock_mutex_);
+    clock_base_us_ = now;
+}
+
+void Playback::toggle() { playing_.load() ? pause() : play(); }
+
+void Playback::seek(uint64_t timestamp_us) {
+    if (!reader_.is_open()) return;
+    uint64_t clamped = std::clamp(timestamp_us, reader_.start_time_us(), reader_.end_time_us());
+    pending_seek_us_.store(clamped);
+    seek_pending_.store(true);
+    current_time_us_.store(clamped);
+    {
+        std::lock_guard<std::mutex> lk(clock_mutex_);
+        clock_base_us_ = clamped;
+        wall_anchor_ = std::chrono::steady_clock::now();
+    }
+    pause_cv_.notify_all();
+}
+
+uint64_t Playback::current_time_us() const {
+    std::lock_guard<std::mutex> lk(clock_mutex_);
+    if (!playing_.load()) return clock_base_us_;
+    auto elapsed = std::chrono::steady_clock::now() - wall_anchor_;
+    uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    uint64_t t = clock_base_us_ + us;
+    return std::min(t, reader_.end_time_us());
+}
+
+VideoFramePtr Playback::latest_frame(const std::string& topic) {
+    std::lock_guard<std::mutex> lk(frames_mutex_);
+    auto it = latest_frames_.find(topic);
+    return it == latest_frames_.end() ? nullptr : it->second;
+}
+
+uint64_t Playback::message_count(const std::string& topic) {
+    std::lock_guard<std::mutex> lk(frames_mutex_);
+    auto it = msg_counts_.find(topic);
+    return it == msg_counts_.end() ? 0 : it->second;
+}
+
+void Playback::dispatch(const McapMessage& msg) {
+    {
+        std::lock_guard<std::mutex> lk(frames_mutex_);
+        msg_counts_[msg.topic]++;
+    }
+    if (!is_video_topic(msg.topic)) return;
+
+    auto dit = decoders_.find(msg.topic);
+    if (dit == decoders_.end()) return;
+
+    DecodedCompressedVideo v;
+    if (!decode_compressed_video(msg.data, v)) return;
+
+    if (suppress_catchup_display_) {
+        // Only the target frame is displayed after catch-up — advance decoder
+        // state through the P-frame chain without converting each one.
+        dit->second->decode_discard(v.format, v.data.data(), (int)v.data.size());
+        return;
+    }
+    auto frame = dit->second->decode(v.format, v.data.data(), (int)v.data.size());
+    if (frame) {
+        frame->timestamp_us = v.timestamp_us;
+        std::lock_guard<std::mutex> lk(frames_mutex_);
+        latest_frames_[msg.topic] = frame;
+    }
+}
+
+void Playback::do_seek_catchup(uint64_t target_us) {
+    for (auto& [_, d] : decoders_) d->reset();
+    uint64_t from_us = reader_.seekable_start_time_us(target_us);
+    if (from_us > target_us) from_us = target_us;
+
+    // Split the catch-up window into a warm-up pass (decode_discard only —
+    // just advancing decoder reference state) and a short tail pass with
+    // suppression off so the final visible frame per topic actually gets
+    // converted. When the whole window is already short (seeking near the
+    // file start), skip the split and just decode it all normally.
+    // The tail pass reads a little PAST the target too: the frame to display
+    // for a seek is "the one at or just after target". For target == file
+    // start (or a sparse stream) there's nothing before it, so without this
+    // the panels stay blank until the first play.
+    const uint64_t tail_us = 500'000;
+    const uint64_t tail_fwd_us = 2'000'000;
+    const uint64_t warm_end = target_us > from_us + tail_us ? target_us - tail_us : from_us;
+
+    if (warm_end > from_us) {
+        suppress_catchup_display_ = true;
+        reader_.read_messages(from_us, warm_end, [&](const McapMessage& m) -> bool {
+            if (should_stop_.load() || seek_pending_.load()) return false;
+            dispatch(m);
+            return true;
+        });
+        suppress_catchup_display_ = false;
+    }
+
+    reader_.read_messages(warm_end, target_us + tail_fwd_us, [&](const McapMessage& m) -> bool {
+        if (should_stop_.load() || seek_pending_.load()) return false;
+        dispatch(m);
+        return true;
+    });
+}
+
+void Playback::playback_loop() {
+    using clock = std::chrono::steady_clock;
+    constexpr int64_t kMinSleepUs = 2000;
+    constexpr int64_t kMaxGapUs = 2'000'000;
+
+    while (!should_stop_.load()) {
+        {
+            std::unique_lock<std::mutex> lock(pause_mutex_);
+            pause_cv_.wait(lock, [this] {
+                return playing_.load() || should_stop_.load() || seek_pending_.load();
+            });
+        }
+        if (should_stop_.load()) break;
+
+        uint64_t start_us = current_time_us_.load();
+        if (seek_pending_.exchange(false)) {
+            start_us = pending_seek_us_.load();
+            current_time_us_.store(start_us);
+            do_seek_catchup(start_us);
+        }
+        if (!playing_.load()) continue;
+
+        auto wall_anchor = clock::now();
+        uint64_t rec_anchor_us = start_us;
+        bool interrupted = false;
+
+        reader_.read_messages(start_us, 0, [&](const McapMessage& msg) -> bool {
+            if (should_stop_.load() || seek_pending_.load()) { interrupted = true; return false; }
+            bool was_paused = false;
+            while (!playing_.load()) {
+                was_paused = true;
+                if (should_stop_.load() || seek_pending_.load()) { interrupted = true; return false; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            if (was_paused) {
+                wall_anchor = clock::now();
+                rec_anchor_us = msg.timestamp_us;
+            }
+            int64_t rec_elapsed_us = (int64_t)msg.timestamp_us - (int64_t)rec_anchor_us;
+            if (rec_elapsed_us > kMaxGapUs || rec_elapsed_us < 0) {
+                wall_anchor = clock::now();
+                rec_anchor_us = msg.timestamp_us;
+                rec_elapsed_us = 0;
+            }
+            auto target = wall_anchor + std::chrono::microseconds(rec_elapsed_us);
+            auto now = clock::now();
+            if (target - now >= std::chrono::microseconds(kMinSleepUs))
+                std::this_thread::sleep_for(target - now);
+
+            dispatch(msg);
+            current_time_us_.store(msg.timestamp_us);
+            return true;
+        });
+
+        if (!interrupted && !should_stop_.load() && !seek_pending_.load()) {
+            playing_.store(false); // reached end of file
+            std::lock_guard<std::mutex> lk(clock_mutex_);
+            clock_base_us_ = reader_.end_time_us();
+        }
+    }
+}
+
+} // namespace mp
