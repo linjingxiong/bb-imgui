@@ -16,6 +16,7 @@
 #include "icons.h"
 #include "logo.h"
 #include "mcap_ui.h"
+#include "playback.h"
 #include "menu.h"
 #include "shell.h"
 #include "theme.h"
@@ -336,7 +337,9 @@ int main(int argc, char** argv) {
 
     logo::load(g_device, g_queue, 19.0f); // Blockbench wordmark for the title bar
     mcap_ui::init(g_device, g_queue);
-    if (argc > 1) mcap_ui::open_path(argv[1]); // CLI: bb_imgui <file.mcap>
+    if (argc > 1) mcap_ui::open_path(argv[1]); // CLI: bb_imgui <file.mcap> [play]
+    if (argc > 2 && std::strcmp(argv[2], "play") == 0 && mcap_ui::has_file())
+        mcap_ui::playback().play();
 
     const ImVec4 clear = ImVec4(0.157f, 0.173f, 0.204f, 1.0f); // Blockbench "ui"
 
@@ -444,24 +447,6 @@ int main(int argc, char** argv) {
             ImGui::TextColored(theme::palette().subtle_text,
                                "Raw message / plot panels: next batch.");
             ImGui::PopFont();
-#if 0
-            // Blockbench-branch demo content, kept for reference only.
-            if (bb::outliner_node("crane_arm_2", false, false, nullptr)) {
-                ImGui::Indent(16);
-                for (int i = 0; i < 3; i++)
-                    if (bb::outliner_node("cube", true, false, &vis_claw_cube[i])) bb::outliner_pop();
-                if (bb::outliner_node("claw", false, true, nullptr)) {
-                    ImGui::Indent(16);
-                    for (int i = 0; i < 5; i++)
-                        if (bb::outliner_node("cube", true, false, &vis_claw_cube[i % 5]))
-                            bb::outliner_pop();
-                    ImGui::Unindent(16);
-                    bb::outliner_pop();
-                }
-                ImGui::Unindent(16);
-                bb::outliner_pop();
-            }
-#endif
         }
         bb::end_panel();
 
