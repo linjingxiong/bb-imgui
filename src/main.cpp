@@ -258,16 +258,13 @@ static bool init_wgpu(GLFWwindow* window) {
         }
     }
 
-    // Present mode: default to Mailbox (low-latency, tear-free) when available,
-    // fall back to Fifo. Override with WGPU_PRESENT=fifo|mailbox|immediate.
+    // Present mode: default to Fifo (vsync, always presents a frame). Mailbox
+    // is lower-latency on a normal desktop, but on this dev machine's ToDesk
+    // remote-desktop session Mailbox silently presents nothing at all (the
+    // window stays a valid, responding, on-screen window per the OS, but no
+    // frame ever reaches the screen) — so don't auto-select it. Override with
+    // WGPU_PRESENT=fifo|mailbox|immediate.
     WGPUPresentMode present = WGPUPresentMode_Fifo;
-    auto supported = [&](WGPUPresentMode m) {
-        for (size_t i = 0; i < caps.presentModeCount; i++)
-            if (caps.presentModes[i] == m) return true;
-        return false;
-    };
-    if (supported(WGPUPresentMode_Mailbox))
-        present = WGPUPresentMode_Mailbox;
     if (const char* e = std::getenv("WGPU_PRESENT")) {
         if (std::strcmp(e, "fifo") == 0) present = WGPUPresentMode_Fifo;
         else if (std::strcmp(e, "mailbox") == 0) present = WGPUPresentMode_Mailbox;
@@ -321,14 +318,20 @@ int main(int, char**) {
     theme::apply(theme::load());
     fonts::install(1.0f);
 
-    static const shell::NavItem nav[] = {
-        {ICON_GRID, "UV"},          {ICON_IMAGE, "Textures"},
-        {ICON_PALETTE, "Palette"},  {ICON_PHOTO_LIBRARY, "Reference"},
-        {ICON_TUNE, "Components"},  {ICON_SETTINGS, "Settings"},
+    static const shell::ProjectTab tabs[] = {
+        {"MB Trac", false}, {"Fire Station", false}, {"planks", true},
     };
-    const int NAV_GALLERY = 4;
-    shell::set_nav(nav, (int)(sizeof(nav) / sizeof(nav[0])));
+    shell::set_tabs(tabs, (int)(sizeof(tabs) / sizeof(tabs[0])));
     shell::set_menus(MENUS, (int)(sizeof(MENUS) / sizeof(MENUS[0])));
+    bool gallery_open = false;
+
+    // Placeholder Transform/Outliner state (this branch is a static UI shell
+    // — no real model data, see the "blockbench-pixel-perfect" plan).
+    double t_position[3] = {0.168, -14.4113, 99.8973};
+    double t_size[3] = {8, 84, 8};
+    double t_pivot[3] = {0, 52.5, 110};
+    double t_rotation[3] = {-25.5305, 11.3125, -3.5525};
+    bool vis_cube1 = true, vis_cube2 = true, vis_claw_cube[5] = {true, true, true, true, true};
 
     ImGui_ImplGlfw_InitForOther(window, true);
     ImGui_ImplWGPU_InitInfo init_info;
@@ -397,25 +400,34 @@ int main(int, char**) {
         if (const char* a = shell::menu_clicked()) {
             last_action = a;
             if (std::strstr(a, "Component gallery"))
-                shell::set_nav_active(NAV_GALLERY);
+                gallery_open = !gallery_open;
         }
 
-        const char* pages[] = {"UV",         "Textures", "Palette",
-                               "Reference",  "Components", "Settings"};
-        int page = shell::nav_active();
+        // Toolbar row: panel name (left) + a few representative Blockbench
+        // tool icons + the Edit/Paint/Animate mode selector (right-aligned,
+        // drawn inside toolbar_begin()). The icons here are a representative
+        // set, not a 1:1 port of Blockbench's per-mode tool list.
+        shell::toolbar_begin(shell::mode() == shell::Mode::Edit ? "UV"
+                             : shell::mode() == shell::Mode::Paint ? "Paint"
+                                                                   : "Animate");
+        static int active_tool = 0;
+        const char* tools[] = {ICON_MOVE, ICON_ROTATE, ICON_RESIZE, ICON_PIVOT, ICON_BRUSH};
+        for (int i = 0; i < 5; i++)
+            if (shell::tool_button(tools[i], active_tool == i)) active_tool = i;
+        shell::toolbar_end();
 
         if (bb::begin_panel("Left")) {
-            if (page == NAV_GALLERY) {
+            if (gallery_open) {
                 gallery::list();
             } else {
-                bb::field_label(pages[page]);
+                bb::field_label("UV");
                 ImGui::TextDisabled("panel content");
             }
         }
         bb::end_panel();
 
         if (bb::begin_panel("Workspace")) {
-            if (page == NAV_GALLERY) {
+            if (gallery_open) {
                 gallery::detail();
             } else {
                 ImGui::PushFont(fonts::medium(), theme::size::HEADING);
@@ -424,15 +436,39 @@ int main(int, char**) {
                 ImGui::TextDisabled("%.1f FPS", (double)io.Framerate);
                 ImGui::Spacing();
                 ImGui::Text("last menu action: %s", last_action);
-                ImGui::TextDisabled("Open View \xe2\x80\xba Component gallery, or the "
-                                    "Components rail icon.");
+                ImGui::TextDisabled("Open View \xe2\x80\xba Component gallery to toggle it.");
             }
         }
         bb::end_panel();
 
         if (bb::begin_panel("Right")) {
-            ImGui::TextUnformatted("Inspector");
-            ImGui::TextDisabled("phase 4");
+            bb::field_label("TRANSFORM");
+            ImGui::Dummy(ImVec2(0, 2));
+            bb::transform_row("Position", t_position);
+            bb::transform_row("Size", t_size);
+            bb::transform_row("Pivot Point", t_pivot);
+            bb::transform_row("Rotation", t_rotation);
+            ImGui::Dummy(ImVec2(0, 10));
+
+            bb::field_label("OUTLINER");
+            ImGui::Dummy(ImVec2(0, 2));
+            if (bb::outliner_node("cube", true, false, &vis_cube1)) bb::outliner_pop();
+            if (bb::outliner_node("cube", true, false, &vis_cube2)) bb::outliner_pop();
+            if (bb::outliner_node("crane_arm_2", false, false, nullptr)) {
+                ImGui::Indent(16);
+                for (int i = 0; i < 3; i++)
+                    if (bb::outliner_node("cube", true, false, &vis_claw_cube[i])) bb::outliner_pop();
+                if (bb::outliner_node("claw", false, true, nullptr)) {
+                    ImGui::Indent(16);
+                    for (int i = 0; i < 5; i++)
+                        if (bb::outliner_node("cube", true, false, &vis_claw_cube[i % 5]))
+                            bb::outliner_pop();
+                    ImGui::Unindent(16);
+                    bb::outliner_pop();
+                }
+                ImGui::Unindent(16);
+                bb::outliner_pop();
+            }
         }
         bb::end_panel();
 

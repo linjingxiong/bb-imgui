@@ -40,6 +40,15 @@ bool num_slider(const char* id, double* v, const NumOpts& o = {});
 // X/Y/Z row of num_sliders. Returns true if any changed.
 bool vec3(const char* id, float v[3]);
 
+// One field of a Transform-panel row: a num_slider with a small coloured
+// triangle in its top-left corner (theme::axis::X/Y/Z), matching
+// Blockbench's Position/Size/Pivot/Rotation fields — no letter label, the
+// colour alone says which axis. `axis` is 0=X, 1=Y, 2=Z.
+bool axis_field(const char* id, int axis, double* v, float width = 0.0f);
+// A full Transform-panel row: a field_label followed by 3 axis_fields.
+// Returns true if any of the three changed.
+bool transform_row(const char* label, double v[3]);
+
 // --- inputs -----------------------------------------------------------
 bool input_text(const char* id, std::string* s, const char* hint = nullptr);
 bool search(const char* id, std::string* s);
@@ -60,5 +69,14 @@ void kbd(const char* text); // keycap badge (inline)
 
 // A collapsible section (Blockbench sidebar group). Returns true if open.
 bool collapsing(const char* label, bool default_open = true);
+
+// --- outliner -----------------------------------------------------------
+// One row of the Outliner tree (Blockbench #cubes_list .outliner_object).
+// `leaf=false` draws a folder icon and a disclosure arrow (call for each
+// child then outliner_pop() if this returns true); `leaf=true` draws a cube
+// icon and never expands. The eye icon toggles `*visible` when non-null.
+bool outliner_node(const char* label, bool leaf, bool selected, bool* visible,
+                   const char* id = nullptr);
+void outliner_pop();
 
 } // namespace bb

@@ -49,6 +49,15 @@ inline constexpr float WORDMARK = 19.0f * CSS;   // Blockbench #corner_logo (1.2
 
 inline constexpr float RADIUS = 4.0f;
 
+// Fixed per-axis colours (css/setup.css --color-axis-{x,y,z}). Not
+// themeable in real Blockbench — used to tint the corner of each axis's
+// number field in the Transform panel, matching the viewport gizmo colours.
+namespace axis {
+inline const ImVec4 X = ImVec4(0xff / 255.0f, 0x12 / 255.0f, 0x42 / 255.0f, 1.0f);
+inline const ImVec4 Y = ImVec4(0x23 / 255.0f, 0xd4 / 255.0f, 0x00 / 255.0f, 1.0f);
+inline const ImVec4 Z = ImVec4(0x08 / 255.0f, 0x94 / 255.0f, 0xed / 255.0f, 1.0f);
+} // namespace axis
+
 // Load a palette. Resolution order:
 //   1. $APP_THEME (path to a .bbtheme)
 //   2. <exe dir>/assets/blockbench-dark.bbtheme

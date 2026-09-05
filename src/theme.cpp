@@ -22,25 +22,28 @@ constexpr ImVec4 rgb(int r, int g, int b) {
     return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
 }
 
-// Built-in Blockbench "Default (Dark)".
+// Built-in Blockbench "Default (Dark)" — pulled verbatim from the real
+// themes/dark.bbtheme in JannisX11/blockbench (some of these had drifted
+// from an earlier, eyeballed pass; accent/text/light/accent_text/
+// subtle_text/wireframe already matched, the rest didn't).
 const Palette BLOCKBENCH_DARK = {
-    /*ui*/ rgb(0x28, 0x2c, 0x34),
-    /*back*/ rgb(0x21, 0x25, 0x2b),
-    /*deep*/ rgb(0x17, 0x19, 0x1d),
-    /*border*/ rgb(0x18, 0x1a, 0x1f),
-    /*selected*/ rgb(0x47, 0x4d, 0x5d),
-    /*button*/ rgb(0x3a, 0x3f, 0x4b),
+    /*ui*/ rgb(0x1e, 0x21, 0x27),
+    /*back*/ rgb(0x18, 0x1b, 0x1f),
+    /*deep*/ rgb(0x10, 0x13, 0x16),   // --color-dark
+    /*border*/ rgb(0x10, 0x13, 0x16), // --color-border
+    /*selected*/ rgb(0x3b, 0x3e, 0x49),
+    /*button*/ rgb(0x33, 0x38, 0x3f),
     /*bright_ui*/ rgb(0xf4, 0xf3, 0xff),
     /*bright_ui_text*/ rgb(0x00, 0x00, 0x06),
     /*accent*/ rgb(0x3e, 0x90, 0xff),
-    /*frame*/ rgb(0x18, 0x1a, 0x1f),
+    /*frame*/ rgb(0x0f, 0x10, 0x12),
     /*text*/ rgb(0xca, 0xca, 0xd4),
     /*light*/ rgb(0xf4, 0xf3, 0xff),
     /*accent_text*/ rgb(0x00, 0x00, 0x06),
     /*subtle_text*/ rgb(0x84, 0x88, 0x91),
-    /*grid*/ rgb(0x49, 0x50, 0x61),
+    /*grid*/ rgb(0x30, 0x33, 0x3d),
     /*wireframe*/ rgb(0x57, 0x6f, 0x82),
-    /*checkerboard*/ rgb(0x1c, 0x20, 0x26),
+    /*checkerboard*/ rgb(0x14, 0x17, 0x1b),
     /*is_dark*/ true,
 };
 

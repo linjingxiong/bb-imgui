@@ -1,6 +1,7 @@
 #include "shell.h"
 
 #include "fonts.h"
+#include "icons.h"
 #include "logo.h"
 #include "theme.h"
 
@@ -21,15 +22,22 @@ bool  g_first_run = false;
 bool  g_dragging = false;
 double g_grab_x = 0, g_grab_y = 0;
 
-const NavItem* g_nav = nullptr;
-int            g_nav_count = 0;
-int            g_nav_active = 0;
+const ProjectTab* g_tabs = nullptr;
+int                g_tab_count = 0;
+int                g_tab_active = 0;
+
+Mode g_mode = Mode::Edit;
+
 const char*    g_status_left = "";
 const char*    g_status_right = "";
 
 const menu::Menu* g_menus = nullptr;
 int               g_menu_count = 0;
 const char*       g_menu_clicked = nullptr;
+
+// Toolbar-row cursor state, live only between toolbar_begin()/toolbar_end().
+float g_toolbar_x = 0.0f;
+float g_toolbar_y = 0.0f;
 
 ImU32 u32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
 
@@ -178,6 +186,159 @@ void titlebar(GLFWwindow* win) {
         g_dragging = false;
 }
 
+// Blockbench #tab_bar: one .project_tab per open model, plus "+" (new tab)
+// and a grid icon (recent files) at the end. Real measurements from
+// window.css: height 34, bg --color-frame, padding-left 4; .project_tab
+// width 240, padding 6px, margin-left 2; .selected gets --color-ui bg and
+// rounded top corners (8px) so it visually merges into the panel below.
+void tab_bar() {
+    const theme::Palette& p = theme::palette();
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    ImVec2 tl(vp->Pos.x, vp->Pos.y + TITLEBAR_H);
+    ImVec2 br(vp->Pos.x + vp->Size.x, tl.y + TAB_BAR_H);
+    dl->AddRectFilled(tl, br, u32(p.frame));
+
+    const float tab_w = 240.0f, gap = 2.0f;
+    float x = tl.x + 4.0f;
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    for (int i = 0; i < g_tab_count; i++) {
+        const ProjectTab& t = g_tabs[i];
+        bool active = (i == g_tab_active);
+        ImVec2 pos(x, tl.y);
+        ImVec2 size(tab_w, TAB_BAR_H);
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::PushID(i);
+        ImGui::InvisibleButton("tab", size);
+        bool hovered = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked())
+            g_tab_active = i;
+        ImGui::PopID();
+
+        if (active)
+            dl->AddRectFilled(pos, ImVec2(pos.x + tab_w, pos.y + TAB_BAR_H), u32(p.ui), 8.0f,
+                              ImDrawFlags_RoundCornersTop);
+        else if (hovered)
+            dl->AddRectFilled(pos, ImVec2(pos.x + tab_w, pos.y + TAB_BAR_H),
+                              u32(mix(p.frame, p.light, 0.06f)), 8.0f, ImDrawFlags_RoundCornersTop);
+
+        ImVec2 ts = ImGui::CalcTextSize(t.name);
+        float tx = pos.x + 10.0f;
+        float ty = pos.y + (TAB_BAR_H - ts.y) * 0.5f;
+        dl->AddText(ImVec2(tx, ty), u32(active ? p.light : p.text), t.name);
+
+        // Unsaved-changes dot (Blockbench: replaced by an "x" close button
+        // on hover; the dot-only state is enough for a static shell).
+        if (t.modified && !hovered) {
+            ImVec2 dp(pos.x + tab_w - 16.0f, pos.y + TAB_BAR_H * 0.5f);
+            dl->AddCircleFilled(dp, 3.0f, u32(p.subtle_text));
+        } else if (hovered) {
+            ImVec2 xc(pos.x + tab_w - 16.0f, pos.y + TAB_BAR_H * 0.5f);
+            dl->AddLine(ImVec2(xc.x - 4, xc.y - 4), ImVec2(xc.x + 4, xc.y + 4), u32(p.subtle_text));
+            dl->AddLine(ImVec2(xc.x - 4, xc.y + 4), ImVec2(xc.x + 4, xc.y - 4), u32(p.subtle_text));
+        }
+        x += tab_w + gap;
+    }
+    ImGui::PopFont();
+
+    // "+" new-tab button.
+    {
+        ImVec2 pos(x + 4.0f, tl.y);
+        ImVec2 size(TAB_BAR_H, TAB_BAR_H);
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::InvisibleButton("##newtab", size);
+        bool hovered = ImGui::IsItemHovered();
+        ImU32 fg = u32(hovered ? p.light : p.subtle_text);
+        ImVec2 c(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
+        dl->AddLine(ImVec2(c.x - 6, c.y), ImVec2(c.x + 6, c.y), fg, 1.3f);
+        dl->AddLine(ImVec2(c.x, c.y - 6), ImVec2(c.x, c.y + 6), fg, 1.3f);
+    }
+
+    // Grid icon (recent files) at the far right of the tab bar.
+    {
+        ImVec2 pos(br.x - TAB_BAR_H, tl.y);
+        ImVec2 size(TAB_BAR_H, TAB_BAR_H);
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::InvisibleButton("##recent", size);
+        bool hovered = ImGui::IsItemHovered();
+        ImGui::PushFont(fonts::body(), 16.0f);
+        ImVec2 ts = ImGui::CalcTextSize(ICON_VIEW_LIST);
+        dl->AddText(ImVec2(pos.x + (size.x - ts.x) * 0.5f, pos.y + (size.y - ts.y) * 0.5f),
+                    u32(hovered ? p.light : p.subtle_text), ICON_VIEW_LIST);
+        ImGui::PopFont();
+    }
+}
+
+// Blockbench .tool: 36x30, active gets an accent-filled 4px-radius pill.
+bool tool_button_impl(const char* icon_glyph, bool active) {
+    const theme::Palette& p = theme::palette();
+    ImVec2 size(36.0f, TOOLBAR_H);
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::PushID(icon_glyph);
+    ImGui::InvisibleButton("tool", size);
+    bool hovered = ImGui::IsItemHovered();
+    bool clicked = ImGui::IsItemClicked();
+    ImGui::PopID();
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (active)
+        dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), u32(p.accent), 4.0f);
+    else if (hovered)
+        dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), u32(p.selected), 4.0f);
+
+    ImGui::PushFont(fonts::body(), 17.0f);
+    ImVec2 ts = ImGui::CalcTextSize(icon_glyph);
+    dl->AddText(ImVec2(pos.x + (size.x - ts.x) * 0.5f, pos.y + (size.y - ts.y) * 0.5f),
+                u32(active ? p.accent_text : (hovered ? p.light : p.text)), icon_glyph);
+    ImGui::PopFont();
+    return clicked;
+}
+
+// Blockbench #mode_selector: right-aligned (margin-left: auto), each li is
+// padding 2px 7px, radius 5, font-size 1.1em; .selected gets accent bg.
+void mode_selector() {
+    const theme::Palette& p = theme::palette();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    static const char* NAMES[] = {"Edit", "Paint", "Animate"};
+    const int count = 3;
+
+    ImGui::PushFont(nullptr, theme::size::SMALL * 1.1f);
+    float total_w = 0.0f;
+    float widths[count];
+    for (int i = 0; i < count; i++) {
+        widths[i] = ImGui::CalcTextSize(NAMES[i]).x + 14.0f; // padding 7px each side
+        total_w += widths[i] + (i ? 6.0f : 0.0f);
+    }
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    float right_edge = vp->Pos.x + vp->Size.x - 12.0f;
+    float x = right_edge - total_w;
+    float y = g_toolbar_y + (TOOLBAR_H - (ImGui::GetTextLineHeight() + 4.0f)) * 0.5f;
+    float h = ImGui::GetTextLineHeight() + 4.0f;
+
+    for (int i = 0; i < count; i++) {
+        ImVec2 pos(x, y);
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::PushID(i);
+        ImGui::InvisibleButton("mode", ImVec2(widths[i], h));
+        bool hovered = ImGui::IsItemHovered();
+        bool sel = ((int)g_mode == i);
+        if (ImGui::IsItemClicked()) g_mode = (Mode)i;
+        ImGui::PopID();
+
+        if (sel)
+            dl->AddRectFilled(pos, ImVec2(pos.x + widths[i], pos.y + h), u32(p.accent), 5.0f);
+        else if (hovered)
+            dl->AddRectFilled(pos, ImVec2(pos.x + widths[i], pos.y + h), u32(p.selected), 5.0f);
+        ImVec2 ts = ImGui::CalcTextSize(NAMES[i]);
+        dl->AddText(ImVec2(pos.x + (widths[i] - ts.x) * 0.5f, pos.y + (h - ts.y) * 0.5f),
+                    u32(sel ? p.accent_text : (hovered ? p.light : p.text)), NAMES[i]);
+        x += widths[i] + 6.0f;
+    }
+    ImGui::PopFont();
+}
+
 // Invisible drag zones along the window edges (borderless windows get no OS
 // resize). 8 zones: edges + corners.
 void resize_handles(GLFWwindow* win) {
@@ -246,52 +407,6 @@ void resize_handles(GLFWwindow* win) {
         active = -1;
 }
 
-// Left icon navigation rail. Spans from under the title bar to above the status
-// bar. Active item: 2px accent bar + accent glyph.
-void left_rail() {
-    const theme::Palette& p = theme::palette();
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-
-    ImVec2 tl(vp->Pos.x, vp->Pos.y + TITLEBAR_H);
-    ImVec2 br(vp->Pos.x + RAIL_W, vp->Pos.y + vp->Size.y - STATUS_H);
-    dl->AddRectFilled(tl, br, u32(p.back));
-    dl->AddLine(ImVec2(br.x - 0.5f, tl.y), ImVec2(br.x - 0.5f, br.y), u32(p.border), 1.0f);
-
-    if (!g_nav || g_nav_count == 0)
-        return;
-
-    const float item_h = 44.0f;
-    ImGui::PushFont(fonts::body(), 20.0f);
-    float y = tl.y + 6.0f;
-    for (int i = 0; i < g_nav_count; i++) {
-        const NavItem& it = g_nav[i];
-        bool active = (i == g_nav_active);
-        ImVec2 pos(tl.x, y);
-        ImGui::SetCursorScreenPos(pos);
-        char id[16];
-        std::snprintf(id, sizeof(id), "##nav%d", i);
-        ImGui::InvisibleButton(id, ImVec2(RAIL_W, item_h));
-        bool hovered = ImGui::IsItemHovered();
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
-            g_nav_active = i;
-        if (hovered && !active)
-            dl->AddRectFilled(pos, ImVec2(pos.x + RAIL_W, pos.y + item_h),
-                              u32(mix(p.ui, p.light, 0.05f)));
-        if (active)
-            dl->AddRectFilled(pos, ImVec2(pos.x + 2.0f, pos.y + item_h), u32(p.accent));
-
-        ImU32 gc = u32(active ? p.accent : (hovered ? p.light : p.subtle_text));
-        ImVec2 ts = ImGui::CalcTextSize(it.icon);
-        dl->AddText(ImVec2(pos.x + (RAIL_W - ts.x) * 0.5f, pos.y + (item_h - ts.y) * 0.5f),
-                    gc, it.icon);
-        if (hovered && it.tooltip[0])
-            ImGui::SetTooltip("%s", it.tooltip);
-        y += item_h;
-    }
-    ImGui::PopFont();
-}
-
 void status_bar() {
     const theme::Palette& p = theme::palette();
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -299,7 +414,8 @@ void status_bar() {
 
     ImVec2 tl(vp->Pos.x, vp->Pos.y + vp->Size.y - STATUS_H);
     ImVec2 br(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y);
-    dl->AddRectFilled(tl, br, u32(p.back));
+    // Blockbench's #status_bar uses --color-ui, not a darker "back" tone.
+    dl->AddRectFilled(tl, br, u32(p.ui));
     dl->AddLine(ImVec2(tl.x, tl.y + 0.5f), ImVec2(br.x, tl.y + 0.5f), u32(p.border), 1.0f);
 
     ImGui::PushFont(nullptr, theme::size::SMALL);
@@ -354,17 +470,18 @@ ImGuiID begin(GLFWwindow* window) {
 
     resize_handles(window);
     titlebar(window);
-    left_rail();
+    tab_bar();
     status_bar();
 
     ImGuiID dock_id = ImGui::GetID("##dockspace");
-    const ImVec2 dock_size(vp->Size.x - RAIL_W, vp->Size.y - TITLEBAR_H - STATUS_H);
+    const float top = TITLEBAR_H + TAB_BAR_H + TOOLBAR_H;
+    const ImVec2 dock_size(vp->Size.x, vp->Size.y - top - STATUS_H);
 
     g_first_run = (ImGui::DockBuilderGetNode(dock_id) == nullptr);
     if (g_first_run)
         build_default_layout(dock_id, dock_size);
 
-    ImGui::SetCursorScreenPos(ImVec2(vp->Pos.x + RAIL_W, vp->Pos.y + TITLEBAR_H));
+    ImGui::SetCursorScreenPos(ImVec2(vp->Pos.x, vp->Pos.y + top));
     ImGui::DockSpace(dock_id, dock_size, ImGuiDockNodeFlags_None);
     return dock_id;
 }
@@ -373,17 +490,53 @@ void end() { ImGui::End(); }
 
 bool first_run() { return g_first_run; }
 
-void set_nav(const NavItem* items, int count) {
-    g_nav = items;
-    g_nav_count = count;
-    if (g_nav_active >= count)
-        g_nav_active = 0;
+void set_tabs(const ProjectTab* tabs, int count) {
+    g_tabs = tabs;
+    g_tab_count = count;
+    if (g_tab_active >= count) g_tab_active = 0;
 }
-int  nav_active() { return g_nav_active; }
-void set_nav_active(int index) {
-    if (index >= 0 && index < g_nav_count)
-        g_nav_active = index;
+int  tabs_active() { return g_tab_active; }
+void set_tabs_active(int index) {
+    if (index >= 0 && index < g_tab_count) g_tab_active = index;
 }
+
+void set_mode(Mode m) { g_mode = m; }
+Mode mode() { return g_mode; }
+
+void toolbar_begin(const char* panel_label) {
+    const theme::Palette& p = theme::palette();
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    ImVec2 tl(vp->Pos.x, vp->Pos.y + TITLEBAR_H + TAB_BAR_H);
+    ImVec2 br(vp->Pos.x + vp->Size.x, tl.y + TOOLBAR_H);
+    dl->AddRectFilled(tl, br, u32(p.ui));
+    dl->AddLine(ImVec2(tl.x, br.y - 0.5f), ImVec2(br.x, br.y - 0.5f), u32(p.border), 1.0f);
+
+    g_toolbar_y = tl.y;
+    g_toolbar_x = tl.x + 10.0f;
+
+    if (panel_label && panel_label[0]) {
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImVec2 ts = ImGui::CalcTextSize(panel_label);
+        dl->AddText(ImVec2(g_toolbar_x, tl.y + (TOOLBAR_H - ts.y) * 0.5f), u32(p.text),
+                    panel_label);
+        ImGui::PopFont();
+        g_toolbar_x += ts.x + 16.0f;
+    }
+    mode_selector();
+    ImGui::SetCursorScreenPos(ImVec2(g_toolbar_x, g_toolbar_y));
+}
+
+bool tool_button(const char* icon_glyph, bool active) {
+    ImGui::SetCursorScreenPos(ImVec2(g_toolbar_x, g_toolbar_y));
+    bool clicked = tool_button_impl(icon_glyph, active);
+    g_toolbar_x += 36.0f + 2.0f;
+    return clicked;
+}
+
+void toolbar_end() {}
+
 void set_status(const char* left, const char* right) {
     g_status_left = left ? left : "";
     g_status_right = right ? right : "";

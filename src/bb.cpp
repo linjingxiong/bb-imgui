@@ -246,6 +246,38 @@ bool vec3(const char* id, float v[3]) {
     return changed;
 }
 
+bool axis_field(const char* id, int axis, double* v, float width) {
+    static const ImVec4* COLORS[3] = {&theme::axis::X, &theme::axis::Y, &theme::axis::Z};
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    NumOpts o;
+    o.width = width;
+    o.decimals = 4;
+    bool changed = num_slider(id, v, o);
+    // Small coloured triangle in the top-left corner, matching Blockbench's
+    // Position/Size/Pivot/Rotation fields (no letter — colour says the axis).
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float s = 6.0f;
+    dl->AddTriangleFilled(pos, ImVec2(pos.x + s, pos.y), ImVec2(pos.x, pos.y + s),
+                          u32(*COLORS[axis]));
+    return changed;
+}
+
+bool transform_row(const char* label, double v[3]) {
+    ImGui::PushID(label);
+    field_label(label);
+    bool changed = false;
+    float avail = ImGui::GetContentRegionAvail().x;
+    float cell = (avail - 16.0f) / 3.0f;
+    for (int i = 0; i < 3; i++) {
+        if (i) ImGui::SameLine(0, 8);
+        ImGui::PushID(i);
+        if (axis_field("##v", i, &v[i], cell)) changed = true;
+        ImGui::PopID();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 // ===========================================================================
 // Inputs
 // ===========================================================================
@@ -403,5 +435,73 @@ bool collapsing(const char* label, bool default_open) {
     ImGui::PopStyleColor(3);
     return open;
 }
+
+// ===========================================================================
+// Outliner
+// ===========================================================================
+bool outliner_node(const char* label, bool leaf, bool selected, bool* visible,
+                   const char* id) {
+    const theme::Palette& p = pal();
+    ImGui::PushID(id ? id : label);
+    const float h = 22.0f; // Blockbench .outliner_object: padding 2px around a ~18px row
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    ImGuiID open_id = ImGui::GetID("open");
+    bool open = leaf || st->GetBool(open_id, true);
+
+    ImGui::InvisibleButton("row", ImVec2(w, h));
+    bool hovered = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked() && !leaf) { open = !open; st->SetBool(open_id, open); }
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (selected)
+        dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), u32(p.selected));
+    else if (hovered)
+        dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), u32(mix(p.ui, p.light, 0.04f)));
+
+    float x = pos.x + 4.0f;
+    if (!leaf) {
+        ImGui::PushFont(fonts::body(), 12.0f);
+        ImVec2 its = ImGui::CalcTextSize(ICON_CHEVRON_RIGHT);
+        dl->AddText(ImVec2(x, pos.y + (h - its.y) * 0.5f), u32(p.subtle_text),
+                    ICON_CHEVRON_RIGHT);
+        ImGui::PopFont();
+    }
+    x += 16.0f;
+
+    ImGui::PushFont(fonts::body(), 15.0f);
+    const char* icon = leaf ? ICON_CUBE : ICON_FOLDER;
+    ImVec2 its = ImGui::CalcTextSize(icon);
+    dl->AddText(ImVec2(x, pos.y + (h - its.y) * 0.5f), u32(leaf ? p.accent : p.subtle_text),
+                icon);
+    ImGui::PopFont();
+    x += its.x + 6.0f;
+
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    ImVec2 lts = ImGui::CalcTextSize(label);
+    dl->AddText(ImVec2(x, pos.y + (h - lts.y) * 0.5f), u32(selected ? p.light : p.text), label);
+    ImGui::PopFont();
+
+    if (visible) {
+        float ex = pos.x + w - 22.0f;
+        ImGui::SetCursorScreenPos(ImVec2(ex, pos.y));
+        ImGui::InvisibleButton("eye", ImVec2(18.0f, h));
+        bool eye_hover = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) *visible = !*visible;
+        ImGui::PushFont(fonts::body(), 13.0f);
+        const char* eic = *visible ? ICON_VISIBILITY : ICON_VISIBILITY_OFF;
+        ImVec2 eits = ImGui::CalcTextSize(eic);
+        dl->AddText(ImVec2(ex + (18.0f - eits.x) * 0.5f, pos.y + (h - eits.y) * 0.5f),
+                    u32(eye_hover || *visible ? p.text : p.subtle_text), eic);
+        ImGui::PopFont();
+    }
+
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + h));
+    ImGui::PopID();
+    return !leaf && open;
+}
+
+void outliner_pop() {}
 
 } // namespace bb
