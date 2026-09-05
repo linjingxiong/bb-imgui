@@ -67,6 +67,11 @@ public:
     std::vector<ImuSample> imu_history(const std::string& topic);
     ImuSample imu_latest(const std::string& topic);
 
+    // Rolling mono audio: (timestamp, one downsampled amplitude in [-1,1]).
+    struct AudioPoint { uint64_t t_us; float amp; };
+    std::vector<AudioPoint> audio_history();
+    bool has_audio();
+
     // A short human-readable summary of the latest message on `topic`
     // (values for IMU, WxH/codec/frame_id for video, format/rate for audio).
     std::string latest_summary(const std::string& topic);
@@ -88,8 +93,11 @@ private:
     std::map<std::string, VideoFramePtr> latest_frames_;
     std::map<std::string, uint64_t> msg_counts_;
     std::map<std::string, std::deque<ImuSample>> imu_hist_;
+    std::deque<AudioPoint> audio_hist_;
+    bool has_audio_ = false;
     std::map<std::string, std::string> latest_summary_;
     static constexpr size_t kImuHistCap = 8000;
+    static constexpr size_t kAudioHistCap = 20000;
 
     std::thread thread_;
     std::atomic<bool> should_stop_{false};

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 
 namespace mp {
@@ -60,6 +61,8 @@ void Playback::close() {
     latest_frames_.clear();
     msg_counts_.clear();
     imu_hist_.clear();
+    audio_hist_.clear();
+    has_audio_ = false;
     latest_summary_.clear();
 }
 
@@ -157,6 +160,16 @@ std::string Playback::latest_summary(const std::string& topic) {
     return it == latest_summary_.end() ? std::string() : it->second;
 }
 
+std::vector<Playback::AudioPoint> Playback::audio_history() {
+    std::lock_guard<std::mutex> lk(frames_mutex_);
+    return {audio_hist_.begin(), audio_hist_.end()};
+}
+
+bool Playback::has_audio() {
+    std::lock_guard<std::mutex> lk(frames_mutex_);
+    return has_audio_;
+}
+
 void Playback::dispatch(const McapMessage& msg) {
     {
         std::lock_guard<std::mutex> lk(frames_mutex_);
@@ -182,8 +195,27 @@ void Playback::dispatch(const McapMessage& msg) {
         char buf[96];
         std::snprintf(buf, sizeof(buf), "%s  %u Hz  %u ch  %zu bytes", a.format.c_str(),
                       a.sample_rate, a.channels, a.data.size());
+        // PCM s16le -> a handful of downsampled mono amplitudes per chunk so
+        // the waveform panel has something continuous to draw.
+        const int ch = a.channels ? (int)a.channels : 1;
+        const int16_t* s = reinterpret_cast<const int16_t*>(a.data.data());
+        const size_t frames = a.data.size() / (2 * ch);
+        const int buckets = 32;
         std::lock_guard<std::mutex> lk(frames_mutex_);
         latest_summary_[msg.topic] = buf;
+        has_audio_ = true;
+        uint32_t sr = a.sample_rate ? a.sample_rate : 16000;
+        for (int b = 0; b < buckets && frames > 0; ++b) {
+            size_t f0 = frames * b / buckets, f1 = frames * (b + 1) / buckets;
+            float peak = 0;
+            for (size_t f = f0; f < f1; ++f) {
+                float v = s[f * ch] / 32768.0f;
+                peak = std::max(peak, v < 0 ? -v : v);
+            }
+            uint64_t t = msg.timestamp_us + (uint64_t)((double)f0 / sr * 1e6);
+            audio_hist_.push_back({t, peak});
+        }
+        while (audio_hist_.size() > kAudioHistCap) audio_hist_.pop_front();
         return;
     }
 
@@ -225,6 +257,7 @@ void Playback::do_seek_catchup(uint64_t target_us) {
         // (a backward seek would otherwise leave stale future samples).
         std::lock_guard<std::mutex> lk(frames_mutex_);
         imu_hist_.clear();
+        audio_hist_.clear();
     }
     uint64_t from_us = reader_.seekable_start_time_us(target_us);
     if (from_us > target_us) from_us = target_us;

@@ -203,28 +203,37 @@ void imu_plot(const std::string& topic, float height) {
     dl->AddText(ImVec2(pos.x + 6, pos.y + 4), u32(p.subtle_text), hdr);
     ImGui::PopFont();
 
-    double mn = 1e300, mx = -1e300;
-    for (auto& s : hist) {
+    // Detrend per axis (subtract each axis's window mean) so gravity on the
+    // accel Z axis doesn't squash the X/Y variation — then scale all three
+    // detrended axes symmetrically about the centre line.
+    double sum[3] = {0, 0, 0};
+    int n = 0;
+    for (const auto& s : hist) {
         if (s.t_us < win_start || s.t_us > now) continue;
-        mn = std::min({mn, s.x, s.y, s.z});
-        mx = std::max({mx, s.x, s.y, s.z});
+        sum[0] += s.x; sum[1] += s.y; sum[2] += s.z;
+        ++n;
     }
-    if (mx < mn) { mn = -1; mx = 1; }
-    if (mx - mn < 1e-6) { mx += 1; mn -= 1; }
+    double mean[3] = {n ? sum[0] / n : 0, n ? sum[1] / n : 0, n ? sum[2] / n : 0};
+    double amp = 1e-6;
+    for (const auto& s : hist) {
+        if (s.t_us < win_start || s.t_us > now) continue;
+        amp = std::max({amp, std::abs(s.x - mean[0]), std::abs(s.y - mean[1]),
+                        std::abs(s.z - mean[2])});
+    }
     auto X = [&](uint64_t t) {
         return pos.x + w * (float)((double)(t - win_start) / (double)window_us);
     };
-    auto Y = [&](double v) {
-        return pos.y + height - 4 - (float)((v - mn) / (mx - mn)) * (height - 16);
-    };
+    float cy = pos.y + height * 0.5f + 6.0f;
+    auto Y = [&](double v) { return cy - (float)(v / amp) * (height * 0.5f - 12.0f); };
+    dl->AddLine(ImVec2(pos.x, cy), ImVec2(pos.x + w, cy), u32(p.border), 1.0f);
     const ImU32 cols[3] = {u32(theme::axis::X), u32(theme::axis::Y), u32(theme::axis::Z)};
     for (int axis = 0; axis < 3; ++axis) {
         bool have_prev = false;
         ImVec2 prev;
         for (const auto& s : hist) {
             if (s.t_us < win_start || s.t_us > now) { have_prev = false; continue; }
-            double v = axis == 0 ? s.x : axis == 1 ? s.y : s.z;
-            ImVec2 pt(X(s.t_us), Y(v));
+            double raw = axis == 0 ? s.x : axis == 1 ? s.y : s.z;
+            ImVec2 pt(X(s.t_us), Y(raw - mean[axis]));
             if (have_prev) dl->AddLine(prev, pt, cols[axis], 1.0f);
             prev = pt;
             have_prev = true;
@@ -236,16 +245,44 @@ void imu_plot(const std::string& topic, float height) {
     ImGui::Dummy(ImVec2(w, height));
 }
 
+void audio_panel(float height) {
+    const theme::Palette& p = theme::palette();
+    auto hist = g_pb->audio_history();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + height), u32(p.deep), theme::RADIUS);
+    dl->AddRect(pos, ImVec2(pos.x + w, pos.y + height), u32(p.border), theme::RADIUS);
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
+    dl->AddText(ImVec2(pos.x + 6, pos.y + 4), u32(p.subtle_text), "audio");
+    ImGui::PopFont();
+
+    const uint64_t now = g_pb->current_time_us();
+    const uint64_t window_us = 6'000'000;
+    const uint64_t win_start = now > window_us ? now - window_us : 0;
+    float cy = pos.y + height * 0.5f + 6.0f;
+    for (const auto& a : hist) {
+        if (a.t_us < win_start || a.t_us > now) continue;
+        float x = pos.x + w * (float)((double)(a.t_us - win_start) / (double)window_us);
+        float h = a.amp * (height * 0.5f - 12.0f);
+        dl->AddLine(ImVec2(x, cy - h), ImVec2(x, cy + h), u32(p.accent), 1.0f);
+    }
+    dl->AddLine(ImVec2(pos.x + w - 1, pos.y), ImVec2(pos.x + w - 1, pos.y + height),
+                u32(p.subtle_text), 1.0f);
+    ImGui::Dummy(ImVec2(w, height));
+}
+
 void imu_plots() {
     if (!has_file()) return;
-    bool any = false;
     for (const auto& t : g_pb->topics()) {
         if (t.rfind("/imu/", 0) != 0) continue;
-        any = true;
         imu_plot(t, 90.0f);
         ImGui::Dummy(ImVec2(0, 6));
     }
-    (void)any;
+    if (g_pb->has_audio()) {
+        audio_panel(70.0f);
+        ImGui::Dummy(ImVec2(0, 6));
+    }
 }
 
 void video_grid() {
