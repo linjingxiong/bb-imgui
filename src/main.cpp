@@ -391,14 +391,21 @@ int main(int, char**) {
         ImGui::NewFrame();
 
         char status_r[64];
-        std::snprintf(status_r, sizeof(status_r), "%.0f FPS  \xc2\xb7  wgpu", (double)io.Framerate);
-        shell::set_status("Ready", status_r);
+        std::snprintf(status_r, sizeof(status_r), "%.0f FPS", (double)io.Framerate);
+        // Left side mirrors Blockbench's status bar: project breadcrumb +
+        // the same modifier-key hints shown in the reference screenshot.
+        const char* active_tab = shell::tabs_active() >= 0 ? tabs[shell::tabs_active()].name : "";
+        char status_l[160];
+        std::snprintf(status_l, sizeof(status_l),
+                     "%s      Ctrl  Select multiple      Shift  Select range      "
+                     "Alt  Drag to duplicate",
+                     active_tab);
+        shell::set_status(status_l, status_r);
+        shell::set_status_tab("COLLECTIONS");
 
         shell::begin(window);
 
-        static const char* last_action = "(none)";
         if (const char* a = shell::menu_clicked()) {
-            last_action = a;
             if (std::strstr(a, "Component gallery"))
                 gallery_open = !gallery_open;
         }
@@ -416,32 +423,42 @@ int main(int, char**) {
             if (shell::tool_button(tools[i], active_tool == i)) active_tool = i;
         shell::toolbar_end();
 
-        if (bb::begin_panel("Left")) {
+        if (bb::begin_panel("Left", false)) {
             if (gallery_open) {
                 gallery::list();
             } else {
-                bb::field_label("UV");
-                ImGui::TextDisabled("panel content");
+                // UV editor placeholder: a checkerboard canvas standing in
+                // for the real UV-mapped texture view (no real UV data in
+                // this shell-only branch).
+                float w = ImGui::GetContentRegionAvail().x;
+                bb::checkerboard(ImVec2(w, w * 0.62f), 8.0f);
+                ImGui::Dummy(ImVec2(0, 10));
+
+                bb::field_label("TEXTURES");
+                ImGui::Dummy(ImVec2(0, 4));
+                static bool tex_sel[2] = {true, false};
+                if (bb::texture_row("mb_trac.png", "256 x 256px (16x)",
+                                    ImVec4(0.55f, 0.45f, 0.30f, 1.0f), tex_sel[0])) {
+                    tex_sel[0] = true; tex_sel[1] = false;
+                }
+                if (bb::texture_row("trailer.png", "256 x 256px (16x)",
+                                    ImVec4(0.65f, 0.15f, 0.12f, 1.0f), tex_sel[1])) {
+                    tex_sel[0] = false; tex_sel[1] = true;
+                }
             }
         }
         bb::end_panel();
 
-        if (bb::begin_panel("Workspace")) {
+        if (bb::begin_panel("Workspace", false)) {
             if (gallery_open) {
                 gallery::detail();
             } else {
-                ImGui::PushFont(fonts::medium(), theme::size::HEADING);
-                ImGui::TextUnformatted("Central workspace");
-                ImGui::PopFont();
-                ImGui::TextDisabled("%.1f FPS", (double)io.Framerate);
-                ImGui::Spacing();
-                ImGui::Text("last menu action: %s", last_action);
-                ImGui::TextDisabled("Open View \xe2\x80\xba Component gallery to toggle it.");
+                bb::viewport_placeholder(ImGui::GetContentRegionAvail());
             }
         }
         bb::end_panel();
 
-        if (bb::begin_panel("Right")) {
+        if (bb::begin_panel("Right", false)) {
             bb::field_label("TRANSFORM");
             ImGui::Dummy(ImVec2(0, 2));
             bb::transform_row("Position", t_position);

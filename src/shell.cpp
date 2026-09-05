@@ -30,6 +30,7 @@ Mode g_mode = Mode::Edit;
 
 const char*    g_status_left = "";
 const char*    g_status_right = "";
+const char*    g_status_tab = "";
 
 const menu::Menu* g_menus = nullptr;
 int               g_menu_count = 0;
@@ -422,9 +423,24 @@ void status_bar() {
     float ty = tl.y + (STATUS_H - ImGui::GetTextLineHeight()) * 0.5f;
     if (g_status_left && g_status_left[0])
         dl->AddText(ImVec2(tl.x + 12, ty), u32(p.subtle_text), g_status_left);
+
+    float rx = br.x - 12.0f;
     if (g_status_right && g_status_right[0]) {
         ImVec2 ts = ImGui::CalcTextSize(g_status_right);
-        dl->AddText(ImVec2(br.x - 12 - ts.x, ty), u32(p.subtle_text), g_status_right);
+        rx -= ts.x;
+        dl->AddText(ImVec2(rx, ty), u32(p.subtle_text), g_status_right);
+        rx -= 16.0f;
+    }
+    // Bottom-right "Collections"-style tab: a small bordered pill, distinct
+    // from the plain status text either side of it.
+    if (g_status_tab && g_status_tab[0]) {
+        ImVec2 ts = ImGui::CalcTextSize(g_status_tab);
+        float tab_w = ts.x + 16.0f, tab_h = STATUS_H - 8.0f;
+        rx -= tab_w;
+        ImVec2 tp(rx, tl.y + 4.0f);
+        dl->AddRectFilled(tp, ImVec2(tp.x + tab_w, tp.y + tab_h), u32(p.button), 3.0f);
+        dl->AddText(ImVec2(tp.x + 8.0f, tp.y + (tab_h - ts.y) * 0.5f), u32(p.text),
+                    g_status_tab);
     }
     ImGui::PopFont();
 }
@@ -541,6 +557,7 @@ void set_status(const char* left, const char* right) {
     g_status_left = left ? left : "";
     g_status_right = right ? right : "";
 }
+void set_status_tab(const char* label) { g_status_tab = label ? label : ""; }
 void set_menus(const menu::Menu* menus, int count) {
     g_menus = menus;
     g_menu_count = count;

@@ -70,12 +70,12 @@ void panel_header(const char* title) {
     ImGui::Dummy(ImVec2(w, PANEL_HEADER_H));
 }
 
-bool begin_panel(const char* name) {
+bool begin_panel(const char* name, bool show_header) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     bool open = ImGui::Begin(name, nullptr,
                              ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove);
     ImGui::PopStyleVar();
-    panel_header(name);
+    if (show_header) panel_header(name);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 6));
     ImGui::Indent(10.0f);
     ImGui::Dummy(ImVec2(0, 4));
@@ -434,6 +434,96 @@ bool collapsing(const char* label, bool default_open) {
     ImGui::PopFont();
     ImGui::PopStyleColor(3);
     return open;
+}
+
+// ===========================================================================
+// Textures / UV
+// ===========================================================================
+bool texture_row(const char* name, const char* dims, ImVec4 thumb_color, bool selected) {
+    const theme::Palette& p = pal();
+    ImGui::PushID(name);
+    const float h = 48.0f;
+    float w = ImGui::GetContentRegionAvail().x;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("row", ImVec2(w, h));
+    bool hovered = ImGui::IsItemHovered();
+    bool clicked = ImGui::IsItemClicked();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (selected)
+        dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), u32(p.selected));
+    else if (hovered)
+        dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), u32(mix(p.ui, p.light, 0.04f)));
+
+    ImVec2 tp(pos.x + 5.0f, pos.y);
+    dl->AddRectFilled(tp, ImVec2(tp.x + 48.0f, tp.y + 48.0f), u32(thumb_color));
+    dl->AddRect(tp, ImVec2(tp.x + 48.0f, tp.y + 48.0f), u32(p.border));
+
+    float tx = tp.x + 48.0f + 8.0f;
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    ImVec2 nts = ImGui::CalcTextSize(name);
+    dl->AddText(ImVec2(tx, pos.y + 10.0f), u32(selected ? p.light : p.text), name);
+    ImGui::PopFont();
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
+    dl->AddText(ImVec2(tx, pos.y + 10.0f + nts.y + 4.0f), u32(p.subtle_text), dims);
+    ImGui::PopFont();
+
+    ImGui::PopID();
+    return clicked;
+}
+
+void checkerboard(ImVec2 size, float cell) {
+    const theme::Palette& p = pal();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
+    ImU32 a = u32(p.checkerboard), b = u32(mix(p.checkerboard, p.light, 0.05f));
+    int cols = (int)(size.x / cell) + 2, rows = (int)(size.y / cell) + 2;
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            ImVec2 cp(pos.x + c * cell, pos.y + r * cell);
+            dl->AddRectFilled(cp, ImVec2(cp.x + cell, cp.y + cell), ((r + c) & 1) ? a : b);
+        }
+    }
+    dl->PopClipRect();
+    dl->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), u32(p.border));
+    ImGui::Dummy(size);
+}
+
+void viewport_placeholder(ImVec2 size) {
+    const theme::Palette& p = pal();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), u32(p.deep));
+
+    // A simple floor grid (not a true perspective projection — this branch
+    // has no real 3D renderer, see the shell-only scope note in main.cpp).
+    ImVec2 c(pos.x + size.x * 0.5f, pos.y + size.y * 0.62f);
+    const int lines = 12;
+    const float spacing = 26.0f;
+    ImU32 grid_col = u32(p.grid);
+    dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
+    for (int i = -lines; i <= lines; i++) {
+        float fx = c.x + i * spacing;
+        dl->AddLine(ImVec2(fx, c.y - lines * spacing * 0.4f), ImVec2(fx, c.y + lines * spacing),
+                    grid_col, 1.0f);
+        float fy = c.y - lines * spacing * 0.4f + (i + lines) * spacing * 0.7f;
+        dl->AddLine(ImVec2(c.x - lines * spacing, fy), ImVec2(c.x + lines * spacing, fy),
+                    grid_col, 1.0f);
+    }
+    dl->PopClipRect();
+
+    // Bottom-right XYZ axis indicator (matches the coloured dots in
+    // Blockbench's own viewport corner).
+    ImVec2 ac(pos.x + size.x - 40.0f, pos.y + size.y - 40.0f);
+    dl->AddLine(ac, ImVec2(ac.x, ac.y - 24.0f), u32(theme::axis::Y), 1.5f);
+    dl->AddCircleFilled(ImVec2(ac.x, ac.y - 26.0f), 4.0f, u32(theme::axis::Y));
+    dl->AddLine(ac, ImVec2(ac.x + 20.0f, ac.y + 10.0f), u32(theme::axis::X), 1.5f);
+    dl->AddCircleFilled(ImVec2(ac.x + 22.0f, ac.y + 11.0f), 4.0f, u32(theme::axis::X));
+    dl->AddLine(ac, ImVec2(ac.x - 20.0f, ac.y + 10.0f), u32(theme::axis::Z), 1.5f);
+    dl->AddCircleFilled(ImVec2(ac.x - 22.0f, ac.y + 11.0f), 4.0f, u32(theme::axis::Z));
+
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::Dummy(size);
 }
 
 // ===========================================================================

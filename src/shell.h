@@ -49,6 +49,9 @@ void toolbar_end();
 
 // Status-bar text (call each frame before begin()).
 void set_status(const char* left, const char* right);
+// A small bordered pill drawn at the far right of the status bar (real
+// Blockbench: a "Collections" tab). Optional — pass "" for none.
+void set_status_tab(const char* label);
 
 // Begin the frame: draw title bar + tab bar + status bar + open the docking
 // host (the toolbar row is drawn separately via toolbar_begin/tool_button*/

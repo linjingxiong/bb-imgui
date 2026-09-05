@@ -12,7 +12,10 @@ inline constexpr float ROW_H = 30.0f;          // Blockbench .bar
 
 // --- panel chrome --------------------------------------------------------
 void panel_header(const char* title);
-bool begin_panel(const char* name);
+// `show_header=false` skips the grey title banner — real Blockbench's main
+// Left/Workspace/Right columns don't have one; their own sub-panels
+// (TEXTURES, TRANSFORM, OUTLINER, ...) already act as headers.
+bool begin_panel(const char* name, bool show_header = true);
 void end_panel();
 
 // A left-aligned dim caption above a control (Blockbench field labels).
@@ -69,6 +72,22 @@ void kbd(const char* text); // keycap badge (inline)
 
 // A collapsible section (Blockbench sidebar group). Returns true if open.
 bool collapsing(const char* label, bool default_open = true);
+
+// --- textures / UV --------------------------------------------------------
+// A 48px Blockbench texture-list row (css/panels.css .texture): a coloured
+// 48x48 thumbnail placeholder (no real image decoding here), the filename,
+// and a subtle resolution caption. Returns true when clicked.
+bool texture_row(const char* name, const char* dims, ImVec4 thumb_color, bool selected);
+
+// A checkerboard fill for the given size at the current cursor position —
+// Blockbench's transparency/UV-canvas background (--color-checkerboard
+// alternating with the panel's own background).
+void checkerboard(ImVec2 size, float cell = 8.0f);
+
+// The 3D viewport's static backdrop: a deep background, a simple grid, and
+// the bottom-right XYZ axis indicator cluster — standing in for the real
+// (unimplemented) 3D scene render.
+void viewport_placeholder(ImVec2 size);
 
 // --- outliner -----------------------------------------------------------
 // One row of the Outliner tree (Blockbench #cubes_list .outliner_object).
