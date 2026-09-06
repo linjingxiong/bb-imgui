@@ -33,6 +33,14 @@ std::unique_ptr<mp::Playback> g_pb;
 std::map<std::string, std::unique_ptr<mp::VideoTexture>> g_textures;
 std::string g_selected_topic;
 int g_rotation = 90; // degrees CW — the Ego device's cameras are mounted sideways
+// Adaptive per-topic IMU Y-scale — grows to the largest |value| seen, never
+// shrinks (EgoViewer's accMaxSeen_/gyroMaxSeen_). Reset on file open.
+std::map<std::string, float> g_imu_scale;
+
+// EgoViewer SensorPanel axis colours (softer than theme::axis).
+const ImVec4 kAxisR = ImVec4(0xEF / 255.0f, 0x44 / 255.0f, 0x44 / 255.0f, 1.0f);
+const ImVec4 kAxisG = ImVec4(0x22 / 255.0f, 0xC5 / 255.0f, 0x5E / 255.0f, 1.0f);
+const ImVec4 kAxisB = ImVec4(0x3B / 255.0f, 0x82 / 255.0f, 0xF6 / 255.0f, 1.0f);
 
 ImU32 u32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
 
@@ -106,6 +114,8 @@ void open_dialog() {
 void open_path(const char* utf8_path) {
     if (!g_pb || !utf8_path || !*utf8_path) return;
     g_textures.clear();
+    g_imu_scale.clear();
+    g_selected_topic.clear();
     if (g_pb->open(utf8_path))
         std::fprintf(stderr, "mcap: opened %s (%zu topics, %zu video)\n", utf8_path,
                      g_pb->topics().size(), g_pb->video_topics().size());
@@ -180,68 +190,101 @@ void inspector() {
     ImGui::PopFont();
 }
 
-// A scrolling x/y/z plot of one IMU topic — a fixed time window ending at
-// the current playback position (a "now" line at the right edge).
+// An x/y/z chart for one IMU topic, modelled on EgoViewer's
+// SensorPanel::drawAxisLegendChart: a 5s window, RAW values (no detrend)
+// against an adaptive-max symmetric Y scale, a faint grid with numeric Y
+// labels, a bottom-left colour/letter/value legend, and an "Acc"/"Gyro"
+// tag bottom-right.
 void imu_plot(const std::string& topic, float height) {
     const theme::Palette& p = theme::palette();
     auto hist = g_pb->imu_history(topic);
+    auto latest = g_pb->imu_latest(topic);
     ImVec2 pos = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + height), u32(p.deep), theme::RADIUS);
-    dl->AddRect(pos, ImVec2(pos.x + w, pos.y + height), u32(p.border), theme::RADIUS);
 
     const uint64_t now = g_pb->current_time_us();
-    const uint64_t window_us = 6'000'000;
+    const uint64_t window_us = 5'000'000;
     const uint64_t win_start = now > window_us ? now - window_us : 0;
 
-    ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
-    auto latest = g_pb->imu_latest(topic);
-    char hdr[96];
-    std::snprintf(hdr, sizeof(hdr), "%s    %.3f  %.3f  %.3f", short_topic(topic), latest.x,
-                  latest.y, latest.z);
-    dl->AddText(ImVec2(pos.x + 6, pos.y + 4), u32(p.subtle_text), hdr);
+    const bool is_gyro = topic.find("gyro") != std::string::npos;
+    float& scale = g_imu_scale[topic];
+    if (scale <= 0.0f) scale = is_gyro ? 1.0f : 15.0f;
+    for (const auto& s : hist) {
+        if (s.t_us < win_start || s.t_us > now) continue;
+        scale = std::max({scale, (float)std::abs(s.x), (float)std::abs(s.y),
+                          (float)std::abs(s.z)});
+    }
+
+    // Chart rect — a left margin for the Y labels, small padding elsewhere.
+    const float y_label_w = 30.0f;
+    ImVec2 c0(pos.x + y_label_w, pos.y + 4.0f);
+    ImVec2 c1(pos.x + w, pos.y + height - 4.0f);
+    dl->AddRectFilled(c0, c1, u32(p.deep));
+
+    const ImU32 grid = IM_COL32(255, 255, 255, 22);
+    for (int i = 0; i <= 5; ++i) {
+        float gx = c0.x + (c1.x - c0.x) * i / 5.0f;
+        dl->AddLine(ImVec2(gx, c0.y), ImVec2(gx, c1.y), grid, 1.0f);
+    }
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.8f);
+    int dec = scale >= 10 ? 0 : (scale >= 1 ? 1 : 2);
+    for (int i = 0; i <= 4; ++i) {
+        float frac = 1.0f - i / 2.0f; // +1, +0.5, 0, -0.5, -1
+        float gy = c0.y + (c1.y - c0.y) * i / 4.0f;
+        dl->AddLine(ImVec2(c0.x, gy), ImVec2(c1.x, gy), grid, 1.0f);
+        char lbl[16];
+        std::snprintf(lbl, sizeof(lbl), "%.*f", dec, frac * scale);
+        ImVec2 ts = ImGui::CalcTextSize(lbl);
+        dl->AddText(ImVec2(pos.x + y_label_w - 4 - ts.x, gy - ts.y * 0.5f), u32(p.subtle_text),
+                    lbl);
+    }
     ImGui::PopFont();
 
-    // Detrend per axis (subtract each axis's window mean) so gravity on the
-    // accel Z axis doesn't squash the X/Y variation — then scale all three
-    // detrended axes symmetrically about the centre line.
-    double sum[3] = {0, 0, 0};
-    int n = 0;
-    for (const auto& s : hist) {
-        if (s.t_us < win_start || s.t_us > now) continue;
-        sum[0] += s.x; sum[1] += s.y; sum[2] += s.z;
-        ++n;
-    }
-    double mean[3] = {n ? sum[0] / n : 0, n ? sum[1] / n : 0, n ? sum[2] / n : 0};
-    double amp = 1e-6;
-    for (const auto& s : hist) {
-        if (s.t_us < win_start || s.t_us > now) continue;
-        amp = std::max({amp, std::abs(s.x - mean[0]), std::abs(s.y - mean[1]),
-                        std::abs(s.z - mean[2])});
-    }
     auto X = [&](uint64_t t) {
-        return pos.x + w * (float)((double)(t - win_start) / (double)window_us);
+        return c1.x - (float)((double)(now - t) / (double)window_us) * (c1.x - c0.x);
     };
-    float cy = pos.y + height * 0.5f + 6.0f;
-    auto Y = [&](double v) { return cy - (float)(v / amp) * (height * 0.5f - 12.0f); };
-    dl->AddLine(ImVec2(pos.x, cy), ImVec2(pos.x + w, cy), u32(p.border), 1.0f);
-    const ImU32 cols[3] = {u32(theme::axis::X), u32(theme::axis::Y), u32(theme::axis::Z)};
+    float mid = (c0.y + c1.y) * 0.5f;
+    auto Y = [&](double v) {
+        double norm = std::clamp(v / scale, -1.0, 1.0);
+        return mid - (float)norm * (c1.y - c0.y) * 0.48f;
+    };
+
+    const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
+    dl->PushClipRect(c0, c1, true);
     for (int axis = 0; axis < 3; ++axis) {
+        ImU32 col = u32(ImVec4(acol[axis].x, acol[axis].y, acol[axis].z, 0.9f));
         bool have_prev = false;
         ImVec2 prev;
         for (const auto& s : hist) {
             if (s.t_us < win_start || s.t_us > now) { have_prev = false; continue; }
             double raw = axis == 0 ? s.x : axis == 1 ? s.y : s.z;
-            ImVec2 pt(X(s.t_us), Y(raw - mean[axis]));
-            if (have_prev) dl->AddLine(prev, pt, cols[axis], 1.0f);
+            ImVec2 pt(X(s.t_us), Y(raw));
+            if (have_prev) dl->AddLine(prev, pt, col, 1.0f);
             prev = pt;
             have_prev = true;
         }
     }
-    // "now" line at the right edge.
-    dl->AddLine(ImVec2(pos.x + w - 1, pos.y), ImVec2(pos.x + w - 1, pos.y + height),
-                u32(p.subtle_text), 1.0f);
+    dl->PopClipRect();
+
+    // Bottom-left legend: swatch + letter + current value, per axis.
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.85f);
+    static const char* names[3] = {"x", "y", "z"};
+    double vals[3] = {latest.x, latest.y, latest.z};
+    float ly = c1.y - 4.0f - 14.0f * 3;
+    for (int axis = 0; axis < 3; ++axis) {
+        dl->AddCircleFilled(ImVec2(c0.x + 8, ly + 6), 3.5f, u32(acol[axis]));
+        char t[40];
+        std::snprintf(t, sizeof(t), "%s  % .*f", names[axis], scale >= 10 ? 2 : 3, vals[axis]);
+        dl->AddText(ImVec2(c0.x + 16, ly), u32(acol[axis]), t);
+        ly += 14.0f;
+    }
+    // Section tag bottom-right.
+    const char* tag = is_gyro ? "Gyro" : "Acc";
+    ImVec2 tts = ImGui::CalcTextSize(tag);
+    dl->AddText(ImVec2(c1.x - tts.x - 6, c1.y - tts.y - 4), u32(p.subtle_text), tag);
+    ImGui::PopFont();
+
     ImGui::Dummy(ImVec2(w, height));
 }
 
@@ -258,7 +301,7 @@ void audio_panel(float height) {
     ImGui::PopFont();
 
     const uint64_t now = g_pb->current_time_us();
-    const uint64_t window_us = 6'000'000;
+    const uint64_t window_us = 5'000'000;
     const uint64_t win_start = now > window_us ? now - window_us : 0;
     float cy = pos.y + height * 0.5f + 6.0f;
     for (const auto& a : hist) {
@@ -276,11 +319,11 @@ void imu_plots() {
     if (!has_file()) return;
     for (const auto& t : g_pb->topics()) {
         if (t.rfind("/imu/", 0) != 0) continue;
-        imu_plot(t, 90.0f);
+        imu_plot(t, 124.0f);
         ImGui::Dummy(ImVec2(0, 6));
     }
     if (g_pb->has_audio()) {
-        audio_panel(70.0f);
+        audio_panel(80.0f);
         ImGui::Dummy(ImVec2(0, 6));
     }
 }
