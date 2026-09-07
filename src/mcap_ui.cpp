@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <map>
 #include <memory>
 #include <string>
@@ -47,6 +48,7 @@ struct View {
 };
 std::map<std::string, View> g_view;
 std::string g_focus_topic;
+bool g_abs_time = true; // transport: show wall-clock timestamp vs M:SS elapsed
 
 void rotate_all() {
     g_rotation = (g_rotation + 90) % 360;
@@ -56,7 +58,7 @@ void rotate_all() {
 
 // Layout metrics. The right panel width is user-draggable.
 constexpr float RAIL_W = 48.0f;
-constexpr float TRANSPORT_H = 66.0f;
+constexpr float TRANSPORT_H = 54.0f;
 constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = 324.0f;
@@ -133,13 +135,6 @@ void draw_video(ImVec2 size, ImTextureID tex, int rot) {
     ImGui::Dummy(size);
 }
 
-// A short mm:ss for the timeline tick labels.
-void fmt_tick(char* buf, size_t n, double s) {
-    int m = (int)(s / 60.0);
-    int sec = (int)(s - m * 60.0);
-    std::snprintf(buf, n, "%d:%02d", m, sec);
-}
-
 const char* short_topic(const std::string& t) {
     auto pos = t.find_last_of('/');
     return pos == std::string::npos ? t.c_str() : t.c_str() + pos + 1;
@@ -150,16 +145,6 @@ std::string upper(const std::string& s) {
     for (char& c : r)
         if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
     return r;
-}
-
-// A "nice" tick interval (seconds) so the timeline shows ~`want` labels.
-double nice_interval(double span_s, int want) {
-    if (span_s <= 0 || want <= 0) return 1.0;
-    double raw = span_s / want;
-    double mag = std::pow(10.0, std::floor(std::log10(raw)));
-    double n = raw / mag;
-    double step = n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10;
-    return step * mag;
 }
 
 // ── Left icon rail ──────────────────────────────────────────────────────
@@ -420,10 +405,10 @@ void display(ImVec2 pos, ImVec2 size) {
     ImGui::EndChild();
 }
 
-// ── Bottom transport bar ───────────────────────────────────────────────
-// A controls row (solid-accent play disc + "M:SS / M:SS" timecode on the
-// left, speed + rotate on the right) over a full-width scrubber with a
-// solid round playhead knob and a row of evenly-spaced time labels.
+// ── Bottom transport bar (Foxglove layout) ─────────────────────────────
+// A thin full-width scrubber on top; a controls row below: an info toggle
+// + absolute wall-clock stamp on the left, skip-start / play / skip-end
+// centred, loop + speed on the right. Outline icons, no filled accent.
 void transport(ImVec2 pos, ImVec2 size) {
     const theme::Palette& p = theme::palette();
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -447,129 +432,137 @@ void transport(ImVec2 pos, ImVec2 size) {
     float frac = std::clamp((float)(cur - s) / (float)span, 0.0f, 1.0f);
     const bool playing = ready && g_pb->playing();
 
-    // ── Controls row ───────────────────────────────────────────────────
-    const float row_y = pos.y + 21.0f;
+    ImU32 c_dim = u32(ImVec4(p.text.x, p.text.y, p.text.z, 0.85f));
+    ImU32 c_lit = u32(p.light);
 
-    const float pr = 13.0f;
-    ImVec2 pc(pos.x + 26.0f, row_y);
-    ImGui::SetCursorScreenPos(ImVec2(pc.x - pr, pc.y - pr));
-    ImGui::InvisibleButton("##play", ImVec2(pr * 2, pr * 2));
-    bool phov = ImGui::IsItemHovered();
-    if (phov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); tooltip(playing ? "Pause" : "Play"); }
-    if (ImGui::IsItemClicked() && ready) g_pb->toggle();
-    dl->AddCircleFilled(pc, pr,
-                        u32(ready ? (phov ? mix(p.accent, p.light, 0.18f) : p.accent) : p.button),
-                        40);
-    ImU32 gl = u32(ready ? p.accent_text : p.subtle_text);
-    if (playing) {
-        dl->AddRectFilled(ImVec2(pc.x - 4.0f, pc.y - 5.0f), ImVec2(pc.x - 1.0f, pc.y + 5.0f), gl, 0.5f);
-        dl->AddRectFilled(ImVec2(pc.x + 1.0f, pc.y - 5.0f), ImVec2(pc.x + 4.0f, pc.y + 5.0f), gl, 0.5f);
-    } else {
-        dl->AddTriangleFilled(ImVec2(pc.x - 3.5f, pc.y - 5.5f), ImVec2(pc.x - 3.5f, pc.y + 5.5f),
-                              ImVec2(pc.x + 6.0f, pc.y), gl);
+    // ── Scrubber — a thin grey track spanning the full width ────────────
+    const float trk_cy = std::floor(pos.y + 8.0f);
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y));
+    ImGui::InvisibleButton("##scrub", ImVec2(size.x, 16.0f));
+    bool shov = ImGui::IsItemHovered() || ImGui::IsItemActive();
+    if (shov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (ImGui::IsItemActive() && ready) {
+        float rel = std::clamp((ImGui::GetIO().MousePos.x - pos.x) / size.x, 0.0f, 1.0f);
+        g_pb->seek(s + (uint64_t)(rel * span));
+    }
+    const float hh = shov ? 3.0f : 2.0f;
+    float px = std::floor(pos.x + size.x * frac);
+    dl->AddRectFilled(ImVec2(pos.x, trk_cy - hh), ImVec2(pos.x + size.x, trk_cy + hh),
+                      u32(mix(p.ui, p.text, 0.20f)));
+    if (ready && px > pos.x)
+        dl->AddRectFilled(ImVec2(pos.x, trk_cy - hh), ImVec2(px, trk_cy + hh),
+                          u32(mix(p.ui, p.text, 0.42f)));
+    if (ready) {
+        // Playhead — a small vertical bar riding the track.
+        float bw = 3.0f, bhh = shov ? 8.0f : 7.0f;
+        dl->AddRectFilled(ImVec2(px - bw * 0.5f, trk_cy - bhh), ImVec2(px + bw * 0.5f, trk_cy + bhh),
+                          c_lit, 1.0f);
     }
 
-    auto fmt_clock = [](char* b, size_t n, uint64_t us) {
-        uint64_t t = us / 1'000'000;
-        unsigned long long h = t / 3600, m = (t / 60) % 60, sec = t % 60;
-        if (h) std::snprintf(b, n, "%llu:%02llu:%02llu", h, m, sec);
-        else std::snprintf(b, n, "%llu:%02llu", m, sec);
+    // ── Controls row ───────────────────────────────────────────────────
+    const float row_y = pos.y + 34.0f;
+
+    auto ico_btn = [&](const char* id, const char* icon, const char* tip, float glyph, bool lit,
+                       ImVec2 c) -> bool {
+        ImVec2 bs(26, 26);
+        ImVec2 bp = snap(ImVec2(c.x - bs.x * 0.5f, c.y - bs.y * 0.5f));
+        ImGui::PushID(id);
+        ImGui::SetCursorScreenPos(bp);
+        ImGui::InvisibleButton("b", bs);
+        bool hov = ImGui::IsItemHovered();
+        bool clk = ImGui::IsItemClicked();
+        ImGui::PopID();
+        if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (tip) tooltip(tip); }
+        icon_centered(dl, icon, bp, bp + bs, glyph,
+                      lit ? u32(p.accent) : (hov ? c_lit : c_dim));
+        return clk;
     };
-    char t_cur[24], t_tot[24];
-    fmt_clock(t_cur, sizeof(t_cur), cur - s);
-    fmt_clock(t_tot, sizeof(t_tot), span);
-    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+
+    // Left: info toggle + timestamp.
+    if (ico_btn("info", ICON_INFO, g_abs_time ? "Show elapsed time" : "Show wall-clock time", 19.0f,
+                false, ImVec2(pos.x + 20.0f, row_y)))
+        g_abs_time = !g_abs_time;
+
+    char stamp[48];
+    if (!ready) {
+        std::snprintf(stamp, sizeof(stamp), "--");
+    } else if (g_abs_time) {
+        std::time_t tt = (std::time_t)(cur / 1'000'000);
+        unsigned ms = (unsigned)((cur / 1000) % 1000);
+        std::tm tmv{};
+#if defined(_WIN32)
+        localtime_s(&tmv, &tt);
+#else
+        localtime_r(&tt, &tmv);
+#endif
+        char base[32];
+        std::strftime(base, sizeof(base), "%Y-%m-%d  %H:%M:%S", &tmv);
+        std::snprintf(stamp, sizeof(stamp), "%s.%03u", base, ms);
+    } else {
+        uint64_t el = (cur - s) / 1'000'000, to = span / 1'000'000;
+        std::snprintf(stamp, sizeof(stamp), "%llu:%02llu / %llu:%02llu",
+                      (unsigned long long)(el / 60), (unsigned long long)(el % 60),
+                      (unsigned long long)(to / 60), (unsigned long long)(to % 60));
+    }
+    ImGui::PushFont(nullptr, theme::size::SMALL);
     float th = ImGui::GetTextLineHeight();
-    float tcx = pos.x + 48.0f;
-    dl->AddText(snap(ImVec2(tcx, row_y - th * 0.5f)), u32(p.light), t_cur);
-    tcx += ImGui::CalcTextSize(t_cur).x;
-    char sep[40];
-    std::snprintf(sep, sizeof(sep), "  /  %s", t_tot);
-    dl->AddText(snap(ImVec2(tcx, row_y - th * 0.5f)), u32(p.subtle_text), sep);
+    dl->AddText(snap(ImVec2(pos.x + 38.0f, row_y - th * 0.5f)), u32(p.text), stamp);
     ImGui::PopFont();
 
-    float right = pos.x + size.x - 14.0f;
-    {
-        ImVec2 bs(24, 24);
-        ImVec2 bp(right - bs.x, row_y - bs.y * 0.5f);
-        ImGui::SetCursorScreenPos(bp);
-        ImGui::InvisibleButton("##rot", bs);
-        bool hov = ImGui::IsItemHovered();
-        if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); tooltip("Rotate all"); }
-        if (ImGui::IsItemClicked()) rotate_all();
-        icon_centered(dl, ICON_ROTATE, bp, bp + bs, 18.0f, u32(hov ? p.light : p.text));
-        right = bp.x - 8.0f;
-    }
+    // Centre: skip-start / play / skip-end.
+    float mid = pos.x + size.x * 0.5f;
+    if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 21.0f, false,
+                ImVec2(mid - 34.0f, row_y)) && ready)
+        g_pb->seek(s);
+    if (ico_btn("play", playing ? ICON_PAUSE : ICON_PLAY, playing ? "Pause" : "Play", 25.0f, false,
+                ImVec2(mid, row_y)) && ready)
+        g_pb->toggle();
+    if (ico_btn("last", ICON_SKIP_NEXT, "Jump to end", 21.0f, false,
+                ImVec2(mid + 34.0f, row_y)) && ready)
+        g_pb->seek(s + span);
+
+    // Right: loop toggle + speed menu.
+    float right = pos.x + size.x - 12.0f;
     {
         static const float SPEEDS[] = {0.5f, 1.0f, 2.0f, 4.0f};
         char sp[8];
         std::snprintf(sp, sizeof(sp), "%gx", ready ? g_pb->speed() : 1.0f);
         ImGui::PushFont(nullptr, theme::size::SMALL);
-        float w = ImGui::CalcTextSize(sp).x + 18.0f;
-        ImVec2 bs(w, 24);
-        ImVec2 bp(right - w, row_y - bs.y * 0.5f);
+        float sw = ImGui::CalcTextSize(sp).x;
+        float chev = 16.0f;
+        float w = sw + chev + 8.0f;
+        ImVec2 bp(right - w, row_y - 12.0f);
         ImGui::SetCursorScreenPos(bp);
-        ImGui::InvisibleButton("##spd", bs);
+        ImGui::PushID("spd");
+        ImGui::InvisibleButton("b", ImVec2(w, 24.0f));
         bool hov = ImGui::IsItemHovered();
-        if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); tooltip("Playback speed"); }
-        if (ImGui::IsItemClicked() && ready) {
-            int i = 0;
-            for (; i < 4; ++i) if (SPEEDS[i] == g_pb->speed()) break;
-            g_pb->set_speed(SPEEDS[(i + 1) % 4]);
+        if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (ImGui::IsItemClicked()) ImGui::OpenPopup("m");
+        dl->AddText(snap(ImVec2(bp.x, row_y - th * 0.5f)), hov ? c_lit : u32(p.text), sp);
+        icon_centered(dl, ICON_CARET_DOWN, ImVec2(bp.x + sw + 2.0f, bp.y),
+                      ImVec2(bp.x + sw + 2.0f + chev, bp.y + 24.0f), 16.0f, u32(p.subtle_text));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, u32(p.ui));
+        ImGui::PushStyleColor(ImGuiCol_Border, u32(p.border));
+        if (ImGui::BeginPopup("m")) {
+            for (float v : SPEEDS) {
+                char l[8];
+                std::snprintf(l, sizeof(l), "%gx", v);
+                if (ImGui::Selectable(l, ready && g_pb->speed() == v) && ready) g_pb->set_speed(v);
+            }
+            ImGui::EndPopup();
         }
-        if (hov) dl->AddRectFilled(bp, bp + bs, u32(p.button), 5.0f);
-        else dl->AddRect(bp, bp + bs, u32(p.border), 5.0f, 0, 1.0f);
-        ImVec2 ts = ImGui::CalcTextSize(sp);
-        dl->AddText(snap(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f)),
-                    u32(hov ? p.light : p.text), sp);
+        ImGui::PopStyleColor(2);
+        ImGui::PopID();
         ImGui::PopFont();
+        right = bp.x - 10.0f;
     }
-
-    // ── Scrubber (full width) ──────────────────────────────────────────
-    const float inset = 16.0f;
-    float tx0 = pos.x + inset, tx1 = pos.x + size.x - inset;
-    float tw = tx1 - tx0;
-    if (tw < 40.0f) { ImGui::EndChild(); return; }
-    float trk_y = std::floor(pos.y + 44.0f);
-    const float hh = 3.0f;
-    float px = std::floor(tx0 + tw * frac);
-
-    ImGui::SetCursorScreenPos(ImVec2(tx0, trk_y - 11.0f));
-    ImGui::InvisibleButton("##scrub", ImVec2(tw, 22.0f));
-    bool shov = ImGui::IsItemHovered() || ImGui::IsItemActive();
-    if (shov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    if (ImGui::IsItemActive() && ready) {
-        float rel = std::clamp((ImGui::GetIO().MousePos.x - tx0) / tw, 0.0f, 1.0f);
-        g_pb->seek(s + (uint64_t)(rel * span));
-    }
-
-    dl->AddRectFilled(ImVec2(tx0, trk_y - hh), ImVec2(tx1, trk_y + hh), u32(p.deep), hh);
-    if (ready && px > tx0 + 1.0f)
-        dl->AddRectFilled(ImVec2(tx0, trk_y - hh), ImVec2(px, trk_y + hh), u32(p.accent), hh,
-                          ImDrawFlags_RoundCornersLeft);
-
-    if (ready) {
-        ImGui::PushFont(nullptr, theme::size::CAPTION);
-        double span_s = span / 1e6;
-        double major = std::max(1.0, nice_interval(span_s, std::max(2, (int)(tw / 120.0f))));
-        float lbl_y = std::floor(pos.y + size.y - ImGui::GetTextLineHeight() - 4.0f);
-        for (double t = 0.0; t <= span_s + 1e-6; t += major) {
-            float x = tx0 + (float)(t / span_s) * tw;
-            char lb[16];
-            fmt_tick(lb, sizeof(lb), t);
-            ImVec2 ls = ImGui::CalcTextSize(lb);
-            float lx = std::clamp(x - ls.x * 0.5f, tx0, tx0 + tw - ls.x);
-            dl->AddText(snap(ImVec2(lx, lbl_y)), u32(p.subtle_text), lb);
+    {
+        bool on = settings::get().loop_at_end;
+        if (ico_btn("loop", ICON_REPEAT, on ? "Loop: on" : "Loop: off", 19.0f, on,
+                    ImVec2(right - 13.0f, row_y))) {
+            settings::get().loop_at_end = !on;
+            settings::save();
         }
-        ImGui::PopFont();
-    }
-
-    if (ready) {
-        float kr = shov ? 8.0f : 7.0f;
-        if (shov)
-            dl->AddCircleFilled(ImVec2(px, trk_y), kr + 3.0f,
-                                u32(ImVec4(p.accent.x, p.accent.y, p.accent.z, 0.25f)), 32);
-        dl->AddCircleFilled(ImVec2(px, trk_y), kr, u32(p.light), 32);
     }
 
     ImGui::EndChild();
