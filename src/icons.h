@@ -91,3 +91,5 @@
 #define ICON_OPEN_IN_FULL       u8"\uf1ce"
 #define ICON_CLOSE_FULLSCREEN   u8"\uf1cf"
 #define ICON_REPEAT             u8"\ue040"
+#define ICON_GRID_VIEW          u8"\ue9b0"
+#define ICON_VIEW_SIDEBAR       u8"\uf114"

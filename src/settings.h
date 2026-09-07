@@ -15,7 +15,8 @@ struct Settings {
     bool        loop_at_end = false;
     float       default_speed = 1.0f;   // 0.5 / 1 / 2 / 4
     int         default_rotation = 90;  // 0 / 90 / 180 / 270 degrees CW
-    int         default_fit = 0;        // 0 = contain, 1 = cover
+    int         default_fit = 1;        // 0 = contain, 1 = cover
+    int         layout = 0;             // 0 = grid, 1 = spotlight
 };
 
 Settings& get();

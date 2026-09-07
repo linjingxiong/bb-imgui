@@ -47,8 +47,9 @@ struct View {
     int fit = -1;  // -1 => seed; then 0 = contain (letterbox), 1 = cover (fill)
 };
 std::map<std::string, View> g_view;
-std::string g_focus_topic;
-bool g_abs_time = true; // transport: show wall-clock timestamp vs M:SS elapsed
+std::string g_focus_topic; // panel expanded to fill the stage (temporary)
+std::string g_featured;    // spotlight-layout main video
+bool g_abs_time = true;    // transport: show wall-clock timestamp vs M:SS elapsed
 
 void rotate_all() {
     g_rotation = (g_rotation + 90) % 360;
@@ -190,11 +191,19 @@ void rail(ImVec2 pos, ImVec2 size) {
         g_imu_scale.clear();
         g_view.clear();
         g_focus_topic.clear();
+        g_featured.clear();
     }
     rail_sep();
     if (rail_btn(ICON_FOLDER_OPEN, "Open MCAP\xe2\x80\xa6", false)) open_dialog();
     if (rail_btn(ICON_ROTATE, "Rotate video 90\xc2\xb0", false)) rotate_all();
-    if (rail_btn(ICON_TIMELINE, "Sensors", false)) {}
+    {
+        int& lay = settings::get().layout;
+        if (rail_btn(lay == 1 ? ICON_VIEW_SIDEBAR : ICON_GRID_VIEW,
+                     lay == 1 ? "Layout: spotlight" : "Layout: grid", false)) {
+            lay = lay == 1 ? 0 : 1;
+            settings::save();
+        }
+    }
 
     // Bottom: Settings, held off the rail's bottom edge.
     ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + size.y - BTN_H - 12.0f));
@@ -348,58 +357,63 @@ void display(ImVec2 pos, ImVec2 size) {
         return;
     }
 
-    // Aspect-fit auto grid: pick the column count that lets each video (plus
-    // its header) be the largest, size every card to that, then centre the
-    // block — and each ragged row — on the dark stage.
-    int n = (int)vts.size();
-    const float HEAD = 32.0f, PAD = 4.0f, MARGIN = 12.0f, GAP = 8.0f;
+    const int n = (int)vts.size();
+    const float GAP = 6.0f;
 
-    // Representative aspect in display orientation (falls back before the
-    // first frame decodes: portrait if the default rotation is 90/270).
-    float aw = 16.0f, ah = 9.0f;
-    {
-        const std::string& t0 = vts[0];
-        int drot = (g_view.count(t0) && g_view[t0].rot >= 0) ? g_view[t0].rot
-                                                             : settings::get().default_rotation;
-        bool rot90 = ((((drot % 360) + 360) % 360) % 180) != 0;
-        auto it = g_textures.find(t0);
-        if (it != g_textures.end() && it->second && it->second->valid() &&
-            it->second->width() > 0 && it->second->height() > 0) {
-            float w = (float)it->second->width(), h = (float)it->second->height();
-            aw = rot90 ? h : w;
-            ah = rot90 ? w : h;
-        } else if (rot90) {
-            aw = 9.0f;
-            ah = 16.0f;
+    if (n == 1) {
+        video_panel(vts[0], pos, size);
+        ImGui::EndChild();
+        return;
+    }
+
+    if (settings::get().layout == 1) {
+        // ── Spotlight: one feature video + a scrolling strip of the rest ──
+        if (g_featured.empty() ||
+            std::find(vts.begin(), vts.end(), g_featured) == vts.end())
+            g_featured = vts[0];
+
+        const float STRIP_W = 200.0f;
+        float feat_w = std::floor(size.x - STRIP_W - GAP);
+        video_panel(g_featured, pos, ImVec2(feat_w, size.y));
+
+        ImVec2 sp(std::floor(pos.x + feat_w + GAP), pos.y);
+        ImGui::SetCursorScreenPos(sp);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, u32(p.deep));
+        ImGui::BeginChild("##strip", ImVec2(STRIP_W, size.y), ImGuiChildFlags_None);
+        float tw = ImGui::GetContentRegionAvail().x;
+        float thumb_h = std::floor(tw * 0.66f + 27.0f);
+        for (const auto& t : vts) {
+            if (t == g_featured) continue;
+            ImVec2 tp = ImGui::GetCursorScreenPos();
+            ImGui::PushID(t.c_str());
+            ImGui::InvisibleButton("promote", ImVec2(tw, thumb_h));
+            bool hov = ImGui::IsItemHovered();
+            if (hov) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                tooltip("Show in main view");
+            }
+            if (ImGui::IsItemClicked()) g_featured = t;
+            ImGui::PopID();
+            video_panel(t, tp, ImVec2(tw, thumb_h));
+            ImGui::SetCursorScreenPos(ImVec2(tp.x, tp.y + thumb_h));
+            ImGui::Dummy(ImVec2(tw, GAP)); // spacing + keeps the scroll extent right
         }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        ImGui::EndChild();
+        return;
     }
 
-    float W = size.x - 2 * MARGIN, H = size.y - 2 * MARGIN;
-    int cols = 1;
-    float best = 0.0f;
-    for (int c = 1; c <= n; ++c) {
-        int r = (n + c - 1) / c;
-        float vidW = (W - (c - 1) * GAP) / c - PAD;
-        float vidH = (H - (r - 1) * GAP) / r - HEAD - PAD;
-        if (vidW <= 4.0f || vidH <= 4.0f) continue;
-        float sc = std::min(vidW / aw, vidH / ah);
-        if (sc > best) { best = sc; cols = c; }
-    }
-    int rows = (n + cols - 1) / cols;
-    if (best <= 0.0f) best = std::min((W / cols) / aw, (H / rows) / ah);
-
-    float cardW = std::floor(aw * best + PAD);
-    float cardH = std::floor(ah * best + HEAD + PAD);
-    float blockH = rows * cardH + (rows - 1) * GAP;
-    float y0 = std::floor(pos.y + (size.y - blockH) * 0.5f);
-
+    // ── Grid: 1 full / 2 halved / 3+ two columns, a lone last cell centred ──
+    int rows = (n + 1) / 2;
+    float cw = std::floor((size.x - GAP) / 2.0f);
+    float ch = std::floor((size.y - GAP * (rows - 1)) / rows);
     for (int i = 0; i < n; ++i) {
-        int gx = i % cols, gy = i / cols;
-        int in_row = (gy == rows - 1) ? (n - gy * cols) : cols;
-        float row_w = in_row * cardW + (in_row - 1) * GAP;
-        float rx = std::floor(pos.x + (size.x - row_w) * 0.5f);
-        video_panel(vts[i], ImVec2(rx + gx * (cardW + GAP), y0 + gy * (cardH + GAP)),
-                    ImVec2(cardW, cardH));
+        int gy = i / 2, gx = i % 2;
+        int in_row = (gy == rows - 1) ? (n - gy * 2) : 2;
+        float x_off = (in_row == 1) ? std::floor((cw + GAP) * 0.5f) : 0.0f;
+        video_panel(vts[i], ImVec2(pos.x + x_off + gx * (cw + GAP), pos.y + gy * (ch + GAP)),
+                    ImVec2(cw, ch));
     }
 
     ImGui::EndChild();
@@ -914,6 +928,7 @@ void open_path(const char* utf8_path) {
     g_selected_topic.clear();
     g_view.clear();
     g_focus_topic.clear();
+        g_featured.clear();
     g_rotation = settings::get().default_rotation; // panels seed from this
     if (g_pb->open(utf8_path)) {
         std::fprintf(stderr, "mcap: opened %s (%zu topics, %zu video)\n", utf8_path,

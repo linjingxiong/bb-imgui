@@ -304,6 +304,7 @@ void load() {
         g_s.default_speed = j.value("default_speed", g_s.default_speed);
         g_s.default_rotation = j.value("default_rotation", g_s.default_rotation);
         g_s.default_fit = j.value("default_fit", g_s.default_fit);
+        g_s.layout = j.value("layout", g_s.layout);
     } catch (...) {
     }
     if (!g_s.theme.empty()) theme::set(g_s.theme);
@@ -317,6 +318,7 @@ void save() {
     j["default_speed"] = g_s.default_speed;
     j["default_rotation"] = g_s.default_rotation;
     j["default_fit"] = g_s.default_fit;
+    j["layout"] = g_s.layout;
     std::ofstream f(path(), std::ios::binary | std::ios::trunc);
     if (f) f << j.dump(2);
 }
