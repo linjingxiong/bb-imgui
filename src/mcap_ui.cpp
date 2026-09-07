@@ -431,6 +431,7 @@ void transport(ImVec2 pos, ImVec2 size) {
     }
     float frac = std::clamp((float)(cur - s) / (float)span, 0.0f, 1.0f);
     const bool playing = ready && g_pb->playing();
+    const bool ended = ready && !playing && g_pb->current_time_us() + 40'000 >= s + span;
 
     ImU32 c_dim = u32(ImVec4(p.text.x, p.text.y, p.text.z, 0.85f));
     ImU32 c_lit = u32(p.light);
@@ -513,9 +514,13 @@ void transport(ImVec2 pos, ImVec2 size) {
     if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 26.0f, false,
                 ImVec2(mid - 42.0f, row_y), 32.0f) && ready)
         g_pb->seek(s);
-    if (ico_btn("play", playing ? ICON_PAUSE : ICON_PLAY, playing ? "Pause" : "Play", 30.0f, false,
-                ImVec2(mid, row_y), 34.0f) && ready)
-        g_pb->toggle();
+    if (ico_btn("play", ended ? ICON_REPLAY : playing ? ICON_PAUSE : ICON_PLAY,
+                ended ? "Replay" : playing ? "Pause" : "Play", ended ? 25.0f : 30.0f, false,
+                ImVec2(mid, row_y), 34.0f) &&
+        ready) {
+        if (ended) { g_pb->seek(s); g_pb->play(); }
+        else g_pb->toggle();
+    }
     if (ico_btn("last", ICON_SKIP_NEXT, "Jump to end", 26.0f, false,
                 ImVec2(mid + 42.0f, row_y), 32.0f) && ready)
         g_pb->seek(s + span);
@@ -907,10 +912,14 @@ void panel_splitter(ImVec2 panel_pos, float panel_h) {
 void layout(ImVec2 o, ImVec2 sz) {
     if (sz.x <= 0 || sz.y <= 0) return;
 
-    // Loop: when playback runs off the end, jump back to the start.
-    if (settings::get().loop_at_end && has_file() && g_pb->playing()) {
+    // End of playback: loop back to the start, or stop and let the transport
+    // show its replay control.
+    if (has_file() && g_pb->playing()) {
         uint64_t e = g_pb->end_time_us(), s = g_pb->start_time_us();
-        if (e > s && g_pb->current_time_us() + 40'000 >= e) g_pb->seek(s);
+        if (e > s && g_pb->current_time_us() + 40'000 >= e) {
+            if (settings::get().loop_at_end) g_pb->seek(s);
+            else g_pb->pause();
+        }
     }
 
     float body_w = sz.x - RAIL_W;
