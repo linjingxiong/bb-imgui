@@ -24,6 +24,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
+#include <string>
+#include <vector>
 #ifdef BB_PROFILE
 #include <chrono>
 #endif
@@ -107,6 +110,31 @@ const menu::Menu MENUS[] = {
     MENU("Transform", TRANSFORM_ITEMS), MENU("Tools", TOOLS_ITEMS),
     MENU("View", VIEW_ITEMS),       MENU("Help", HELP_ITEMS),
 };
+
+// The View menu, rebuilt each frame so the theme list (and its checkmarks)
+// stays live. Returns a menu array to hand to shell::set_menus().
+const menu::Menu* build_menus() {
+    static std::vector<menu::Item> view;
+    view.assign(std::begin(VIEW_ITEMS), std::end(VIEW_ITEMS));
+    view.push_back(menu::separator());
+    for (const std::string& n : theme::list()) {
+        menu::Item it{};
+        it.icon = ICON_PALETTE;
+        it.label = n.c_str(); // stable within this frame (theme::list() owns it)
+        it.checked = (n == theme::current());
+        view.push_back(it);
+    }
+    { menu::Item it{}; it.icon = ICON_HISTORY; it.label = "Reload themes"; view.push_back(it); }
+
+    static menu::Menu menus[] = {
+        MENU("File", FILE_ITEMS),       MENU("Edit", EDIT_ITEMS),
+        MENU("Transform", TRANSFORM_ITEMS), MENU("Tools", TOOLS_ITEMS),
+        {"View", nullptr, 0},           MENU("Help", HELP_ITEMS),
+    };
+    menus[4].items = view.data();
+    menus[4].count = (int)view.size();
+    return menus;
+}
 #undef MENU
 } // namespace
 
@@ -317,14 +345,13 @@ int main(int argc, char** argv) {
     io.ConfigWindowsMoveFromTitleBarOnly = true;
     io.IniFilename = nullptr; // TODO: persist layout under a real path
 
-    theme::apply(theme::load());
+    theme::load(); // builds the theme registry + applies the remembered theme
     fonts::install(1.0f);
 
     static const shell::ProjectTab tabs[] = {
         {"MCAP Player", false},
     };
     shell::set_tabs(tabs, (int)(sizeof(tabs) / sizeof(tabs[0])));
-    shell::set_menus(MENUS, (int)(sizeof(MENUS) / sizeof(MENUS[0])));
     bool gallery_open = false; // dev: View > Component gallery still toggles the widget browser
 
     ImGui_ImplGlfw_InitForOther(window, true);
@@ -401,6 +428,8 @@ int main(int argc, char** argv) {
         shell::set_status(status_l, status_r);
         shell::set_status_tab("COLLECTIONS");
 
+        theme::poll_hot_reload();
+        shell::set_menus(build_menus(), 6);
         shell::begin(window);
 
         if (const char* a = shell::menu_clicked()) {
@@ -408,6 +437,12 @@ int main(int argc, char** argv) {
                 gallery_open = !gallery_open;
             else if (std::strstr(a, "Open MCAP") || std::strstr(a, "Open Model"))
                 mcap_ui::open_dialog();
+            else if (std::strcmp(a, "Reload themes") == 0)
+                theme::rescan();
+            else {
+                for (const std::string& n : theme::list())
+                    if (n == a) { theme::set(n); break; }
+            }
         }
 
         // Toolbar row: panel name (left) + a few representative Blockbench

@@ -4,6 +4,7 @@
 #include "imgui.h"
 
 #include <string>
+#include <vector>
 
 namespace theme {
 
@@ -58,10 +59,9 @@ inline const ImVec4 Y = ImVec4(0x23 / 255.0f, 0xd4 / 255.0f, 0x00 / 255.0f, 1.0f
 inline const ImVec4 Z = ImVec4(0x08 / 255.0f, 0x94 / 255.0f, 0xed / 255.0f, 1.0f);
 } // namespace axis
 
-// Load a palette. Resolution order:
-//   1. $APP_THEME (path to a .bbtheme)
-//   2. <exe dir>/assets/blockbench-dark.bbtheme
-//   3. the built-in Blockbench dark default
+// Build the theme registry (built-ins + assets/themes/*.json) and apply the
+// last-used theme (remembered in <exe>/theme.txt), or the default. Call once
+// at startup. Returns the applied palette (so `apply(load())` still works).
 Palette load();
 
 // Push `p` into ImGui::GetStyle() and remember it for palette().
@@ -69,6 +69,21 @@ void apply(const Palette& p);
 
 // The palette last passed to apply() (built-in default before that).
 const Palette& palette();
+
+// ── Runtime theme switching ──────────────────────────────────────────────
+// Every available theme's name, in menu order (built-ins first).
+const std::vector<std::string>& list();
+// The active theme's name.
+const std::string& current();
+// Switch to a named theme now (applies immediately, remembers the choice).
+void set(const std::string& name);
+// Advance to the next theme in list() — for a cycle shortcut.
+void cycle();
+// Re-scan assets/themes/ for added/removed/edited files.
+void rescan();
+// Call once per frame: if the active theme is file-backed and its file
+// changed on disk, re-parse and re-apply it (live theme editing).
+void poll_hot_reload();
 
 // Parse "#rgb" / "#rgba" / "#rrggbb" / "#rrggbbaa". Returns false on bad input.
 bool parse_hex(const std::string& s, ImVec4& out);

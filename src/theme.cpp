@@ -2,8 +2,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -47,7 +49,32 @@ const Palette BLOCKBENCH_DARK = {
     /*is_dark*/ true,
 };
 
-Palette g_current = BLOCKBENCH_DARK;
+// Ohwow (ohwow.design) — a near-monochrome dark theme. Colours sampled from
+// a screenshot of the app; there's no coloured accent (it uses brightness,
+// not hue, for emphasis), so `accent` is a light grey and selected states
+// read as light-on-dark.
+const Palette OHWOW_DARK = {
+    /*ui*/ rgb(0x22, 0x1f, 0x23),
+    /*back*/ rgb(0x13, 0x13, 0x13),
+    /*deep*/ rgb(0x02, 0x02, 0x02),
+    /*border*/ rgb(0x11, 0x11, 0x11),
+    /*selected*/ rgb(0x37, 0x37, 0x37),
+    /*button*/ rgb(0x37, 0x37, 0x37),
+    /*bright_ui*/ rgb(0x1f, 0x1d, 0x20),
+    /*bright_ui_text*/ rgb(0xc9, 0xc7, 0xca),
+    /*accent*/ rgb(0xe6, 0xe6, 0xe6),
+    /*frame*/ rgb(0x13, 0x13, 0x13),
+    /*text*/ rgb(0xc9, 0xc7, 0xca),
+    /*light*/ rgb(0xf2, 0xf2, 0xf2),
+    /*accent_text*/ rgb(0x0a, 0x0a, 0x0a),
+    /*subtle_text*/ rgb(0x70, 0x70, 0x70),
+    /*grid*/ rgb(0x2a, 0x2a, 0x2a),
+    /*wireframe*/ rgb(0x50, 0x50, 0x50),
+    /*checkerboard*/ rgb(0x14, 0x14, 0x14),
+    /*is_dark*/ true,
+};
+
+Palette g_current = OHWOW_DARK;
 
 int hex_nibble(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -165,20 +192,137 @@ bool parse_hex(const std::string& in, ImVec4& out) {
     return true;
 }
 
-Palette load() {
-    std::string path;
-    if (const char* env = std::getenv("APP_THEME"); env && *env) {
-        path = env;
-    } else {
-        std::string beside = exe_dir() + "/assets/blockbench-dark.bbtheme";
-        if (std::ifstream(beside)) path = beside;
-    }
+// ── Theme registry ──────────────────────────────────────────────────────
+namespace {
 
-    if (path.empty()) return BLOCKBENCH_DARK;
-    std::string src = read_file(path);
-    Palette out;
-    if (!src.empty() && parse(src, BLOCKBENCH_DARK, out)) return out;
-    return BLOCKBENCH_DARK;
+namespace fs = std::filesystem;
+
+struct Entry {
+    std::string name;
+    Palette palette;
+    std::string path;                     // empty for a built-in
+    fs::file_time_type mtime{};
+    bool builtin = false;
+};
+
+std::vector<Entry> g_themes;
+std::vector<std::string> g_names;         // cached list() result
+std::string g_current_name;
+
+std::string themes_dir() { return exe_dir() + "/assets/themes"; }
+std::string settings_path() { return exe_dir() + "/theme.txt"; }
+
+// The name from a theme JSON's top-level "name" (falls back to the file stem).
+std::string theme_name_from(const std::string& src, const fs::path& p) {
+    try {
+        auto j = nlohmann::json::parse(src, nullptr, false);
+        if (j.is_object() && j.contains("name") && j["name"].is_string())
+            return j["name"].get<std::string>();
+    } catch (...) {}
+    return p.stem().string();
+}
+
+void refresh_names() {
+    g_names.clear();
+    for (const auto& e : g_themes) g_names.push_back(e.name);
+}
+
+Entry* find(const std::string& name) {
+    for (auto& e : g_themes)
+        if (e.name == name) return &e;
+    return nullptr;
+}
+
+void build_registry() {
+    g_themes.clear();
+    g_themes.push_back({"Ohwow", OHWOW_DARK, {}, {}, true});
+    g_themes.push_back({"Blockbench Dark", BLOCKBENCH_DARK, {}, {}, true});
+
+    std::error_code ec;
+    for (const auto& de : fs::directory_iterator(themes_dir(), ec)) {
+        if (ec) break;
+        if (!de.is_regular_file()) continue;
+        auto ext = de.path().extension().string();
+        if (ext != ".json" && ext != ".bbtheme") continue;
+        std::string src = read_file(de.path().string());
+        if (src.empty()) continue;
+        Palette pal;
+        if (!parse(src, BLOCKBENCH_DARK, pal)) continue;
+        std::string name = theme_name_from(src, de.path());
+        auto tm = fs::last_write_time(de.path(), ec);
+        // A file with a built-in's name overrides it (so editing the file
+        // live-tunes that theme); otherwise it's a new entry.
+        if (Entry* existing = find(name)) {
+            existing->palette = pal;
+            existing->path = de.path().string();
+            existing->mtime = tm;
+            existing->builtin = false;
+        } else {
+            g_themes.push_back({name, pal, de.path().string(), tm, false});
+        }
+    }
+    refresh_names();
+}
+
+} // namespace
+
+const std::vector<std::string>& list() { return g_names; }
+const std::string& current() { return g_current_name; }
+
+void set(const std::string& name) {
+    Entry* e = find(name);
+    if (!e) return;
+    g_current_name = name;
+    apply(e->palette);
+    std::ofstream(settings_path(), std::ios::trunc) << name;
+}
+
+void cycle() {
+    if (g_names.empty()) return;
+    auto it = std::find(g_names.begin(), g_names.end(), g_current_name);
+    size_t next = (it == g_names.end()) ? 0 : (size_t)(it - g_names.begin() + 1) % g_names.size();
+    set(g_names[next]);
+}
+
+void rescan() {
+    build_registry();
+    // Keep the current selection if it still exists, else fall back.
+    if (!find(g_current_name) && !g_names.empty()) set(g_names.front());
+}
+
+void poll_hot_reload() {
+    Entry* e = find(g_current_name);
+    if (!e || e->path.empty()) return;
+    std::error_code ec;
+    auto tm = fs::last_write_time(e->path, ec);
+    if (ec || tm == e->mtime) return;
+    std::string src = read_file(e->path);
+    Palette pal;
+    if (!src.empty() && parse(src, BLOCKBENCH_DARK, pal)) {
+        e->palette = pal;
+        e->mtime = tm;
+        apply(pal);
+    }
+}
+
+Palette load() {
+    build_registry();
+
+    std::string want;
+    if (const char* env = std::getenv("APP_THEME"); env && *env) {
+        // Back-compat: APP_THEME as a path — parse it as a one-off.
+        std::string src = read_file(env);
+        Palette out;
+        if (!src.empty() && parse(src, BLOCKBENCH_DARK, out)) {
+            apply(out);
+            g_current_name = "(APP_THEME)";
+            return out;
+        }
+    }
+    if (std::ifstream f{settings_path()}) std::getline(f, want);
+    if (want.empty() || !find(want)) want = "Ohwow";
+    set(want);
+    return g_current;
 }
 
 void apply(const Palette& p) {

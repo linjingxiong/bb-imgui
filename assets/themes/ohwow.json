@@ -1,0 +1,23 @@
+{
+  "name": "Ohwow",
+  "note": "ohwow.design — near-monochrome dark. Edit + save: the app hot-reloads it.",
+  "colors": {
+    "ui": "#221f23",
+    "back": "#131313",
+    "dark": "#020202",
+    "border": "#111111",
+    "selected": "#373737",
+    "button": "#373737",
+    "bright_ui": "#1f1d20",
+    "bright_ui_text": "#c9c7ca",
+    "accent": "#e6e6e6",
+    "frame": "#131313",
+    "text": "#c9c7ca",
+    "light": "#f2f2f2",
+    "accent_text": "#0a0a0a",
+    "subtle_text": "#707070",
+    "grid": "#2a2a2a",
+    "wireframe": "#505050",
+    "checkerboard": "#141414"
+  }
+}

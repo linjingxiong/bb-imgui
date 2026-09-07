@@ -1,0 +1,23 @@
+{
+  "name": "Blockbench Dark",
+  "note": "Blockbench's Default (Dark), from themes/dark.bbtheme in JannisX11/blockbench.",
+  "colors": {
+    "ui": "#1e2127",
+    "back": "#181b1f",
+    "dark": "#101316",
+    "border": "#101316",
+    "selected": "#3b3e49",
+    "button": "#33383f",
+    "bright_ui": "#f4f3ff",
+    "bright_ui_text": "#000006",
+    "accent": "#3e90ff",
+    "frame": "#0f1012",
+    "text": "#cacad4",
+    "light": "#f4f3ff",
+    "accent_text": "#000006",
+    "subtle_text": "#848891",
+    "grid": "#30333d",
+    "wireframe": "#576f82",
+    "checkerboard": "#14171b"
+  }
+}
