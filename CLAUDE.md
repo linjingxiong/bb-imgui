@@ -20,8 +20,13 @@
 ## 提交与推送分离
 
 - 用户说"提交" → 只做本地 `git commit`。
-- 只有用户明确说"推送" / "启动"（在"要不要推送"的语境下）才 `git push`。
+- 只有用户明确说"推送"才 `git push`。
 - commit 身份：`-c user.email=zsmelfry@gmail.com -c user.name=linjx`。
+
+## "启动" = 运行 exe
+
+用户说"启动"永远表示：编译（如有改动）并运行 `build/bin/Release/bb_imgui.exe`（带测试
+mcap），**不是**推送、也不是别的。
 
 ## 其它
 
