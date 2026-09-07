@@ -440,23 +440,64 @@ void transport(ImVec2 pos, ImVec2 size) {
     const float trk_cy = std::floor(pos.y + 8.0f);
     ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y));
     ImGui::InvisibleButton("##scrub", ImVec2(size.x, 16.0f));
-    bool shov = ImGui::IsItemHovered() || ImGui::IsItemActive();
-    if (shov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    if (ImGui::IsItemActive() && ready) {
+    bool scrub_active = ImGui::IsItemActive();
+    if (ImGui::IsItemHovered() || scrub_active) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (scrub_active && ready) {
         float rel = std::clamp((ImGui::GetIO().MousePos.x - pos.x) / size.x, 0.0f, 1.0f);
         g_pb->seek(s + (uint64_t)(rel * span));
     }
-    const float hh = shov ? 4.0f : 3.0f;
+    const float hh = 3.0f; // fixed — a hover-driven change makes the track jitter
     float px = std::floor(pos.x + size.x * frac);
     dl->AddRectFilled(ImVec2(pos.x, trk_cy - hh), ImVec2(pos.x + size.x, trk_cy + hh),
                       u32(mix(p.ui, p.deep, 0.5f)));
     if (ready && px > pos.x)
         dl->AddRectFilled(ImVec2(pos.x, trk_cy - hh), ImVec2(px, trk_cy + hh), u32(p.accent));
     if (ready) {
-        // Playhead — a small vertical bar riding the track.
-        float bw = 3.0f, bhh = shov ? 8.0f : 7.0f;
+        // The bubble + enlarged bar show only while the pointer is on the
+        // playhead itself (or dragging it), not anywhere on the track.
+        ImVec2 m = ImGui::GetIO().MousePos;
+        bool head = (m.x >= px - 7.0f && m.x <= px + 7.0f && m.y >= pos.y && m.y <= pos.y + 16.0f);
+        bool shov = head || scrub_active;
+
+        float bw = shov ? 4.0f : 3.0f, bhh = shov ? 9.0f : 7.0f;
         dl->AddRectFilled(ImVec2(px - bw * 0.5f, trk_cy - bhh), ImVec2(px + bw * 0.5f, trk_cy + bhh),
                           c_lit, 1.0f);
+
+        // Time bubble above the playhead (on the foreground list so it can
+        // sit above the transport, over the video).
+        if (shov) {
+            char hb[24];
+            if (g_abs_time) {
+                std::time_t tt = (std::time_t)(cur / 1'000'000);
+                unsigned ms = (unsigned)((cur / 1000) % 1000);
+                std::tm tv{};
+#if defined(_WIN32)
+                localtime_s(&tv, &tt);
+#else
+                localtime_r(&tt, &tv);
+#endif
+                char hh2[16];
+                std::strftime(hh2, sizeof(hh2), "%H:%M:%S", &tv);
+                std::snprintf(hb, sizeof(hb), "%s.%03u", hh2, ms);
+            } else {
+                uint64_t el = cur - s, sec = el / 1'000'000, ms = (el / 1000) % 1000;
+                std::snprintf(hb, sizeof(hb), "%llu:%02llu.%03llu", (unsigned long long)(sec / 60),
+                              (unsigned long long)(sec % 60), (unsigned long long)ms);
+            }
+            ImDrawList* fg = ImGui::GetForegroundDrawList();
+            ImGui::PushFont(nullptr, theme::size::SMALL);
+            ImVec2 ts = ImGui::CalcTextSize(hb);
+            float bx = std::clamp(px, pos.x + ts.x * 0.5f + 8.0f,
+                                  pos.x + size.x - ts.x * 0.5f - 8.0f);
+            float bot = pos.y - 3.0f, top = bot - ts.y - 8.0f;
+            ImVec2 q0(std::floor(bx - ts.x * 0.5f - 7.0f), std::floor(top));
+            ImVec2 q1(std::floor(bx + ts.x * 0.5f + 7.0f), std::floor(bot));
+            fg->AddRectFilled(q0, q1, u32(p.bright_ui), 3.0f);
+            fg->AddTriangleFilled(ImVec2(px - 4.0f, bot - 0.5f), ImVec2(px + 4.0f, bot - 0.5f),
+                                  ImVec2(px, bot + 4.0f), u32(p.bright_ui));
+            fg->AddText(snap(ImVec2(bx - ts.x * 0.5f, top + 3.0f)), u32(p.bright_ui_text), hb);
+            ImGui::PopFont();
+        }
     }
 
     // ── Controls row ───────────────────────────────────────────────────
