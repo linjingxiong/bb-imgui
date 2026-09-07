@@ -106,6 +106,13 @@ const char* short_topic(const std::string& t) {
     return pos == std::string::npos ? t.c_str() : t.c_str() + pos + 1;
 }
 
+std::string upper(const std::string& s) {
+    std::string r = s;
+    for (char& c : r)
+        if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+    return r;
+}
+
 // A "nice" tick interval (seconds) so the timeline shows ~`want` labels.
 double nice_interval(double span_s, int want) {
     if (span_s <= 0 || want <= 0) return 1.0;
@@ -135,10 +142,8 @@ void rail(ImVec2 pos, ImVec2 size) {
         ImGui::InvisibleButton(icon, bs);
         bool hov = ImGui::IsItemHovered();
         bool clk = ImGui::IsItemClicked();
-        if (active)
+        if (active || hov)
             dl->AddRectFilled(bp, bp + bs, u32(p.selected));
-        else if (hov)
-            dl->AddRectFilled(bp, bp + bs, u32(p.button));
         if (active)
             dl->AddRectFilled(bp, ImVec2(bp.x + 2.0f, bp.y + bs.y), u32(p.accent));
         ImGui::PushFont(fonts::body(), RAIL_ICON_PX);
@@ -177,54 +182,59 @@ void rail(ImVec2 pos, ImVec2 size) {
 }
 
 // ── Video panel ────────────────────────────────────────────────────────
-// A Foxglove-style image panel: a bordered card with a title bar (topic
-// name + expand / settings / more icons) over a letterboxed frame. The
-// settings popup carries rotation + fit mode (per panel).
+// A Blockbench-style panel: square, flush-tiled, a `panel_handle`-like
+// header (uppercase muted title + controls that only surface on hover)
+// over the video frame. The settings popup carries rotation + fit mode.
 void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     const theme::Palette& p = theme::palette();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float HEAD = 28.0f;
-    const float R = 5.0f;
+    const float HEAD = 27.0f; // Blockbench h3.panel_handle
 
-    dl->AddRectFilled(pos, pos + size, u32(p.ui), R);
-    dl->AddRect(pos, pos + size, u32(p.border), R, 0, 1.0f);
-    dl->AddLine(ImVec2(pos.x + 1, pos.y + HEAD), ImVec2(pos.x + size.x - 1, pos.y + HEAD),
-                u32(p.border), 1.0f);
+    dl->AddRectFilled(pos, pos + size, u32(p.ui));
+    dl->AddLine(ImVec2(pos.x, pos.y + HEAD), ImVec2(pos.x + size.x, pos.y + HEAD), u32(p.border),
+                1.0f);
 
     View& v = g_view[topic];
     if (v.rot < 0) v.rot = g_rotation;
 
-    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
-    dl->AddText(ImVec2(pos.x + 10, pos.y + (HEAD - ImGui::GetTextLineHeight()) * 0.5f), u32(p.text),
-                short_topic(topic));
+    bool panel_hov = ImGui::IsMouseHoveringRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), false);
+    bool focused = (g_focus_topic == topic);
+
+    // Title — uppercase, small, muted (Blockbench panel_handle).
+    ImGui::PushFont(fonts::medium(), theme::size::CAPTION);
+    dl->AddText(ImVec2(pos.x + 10, pos.y + (HEAD - ImGui::GetTextLineHeight()) * 0.5f),
+                u32(p.subtle_text), upper(topic).c_str());
     ImGui::PopFont();
 
-    // Right icon cluster (drawn right-to-left).
+    // Controls: hit boxes always exist; glyphs only surface on panel hover
+    // (or while the popup is open / the panel is focused).
+    ImGui::PushID((topic + "vp").c_str());
+    bool show_ctl = panel_hov || focused || ImGui::IsPopupOpen("vset");
     float rx = pos.x + size.x - 6.0f;
     auto hdr_btn = [&](const char* tag, const char* icon, bool active) -> bool {
         ImVec2 bs(22.0f, 22.0f);
         ImVec2 bp(rx - bs.x, pos.y + (HEAD - bs.y) * 0.5f);
-        ImGui::PushID((topic + tag).c_str());
+        ImGui::PushID(tag);
         ImGui::SetCursorScreenPos(bp);
         ImGui::InvisibleButton("b", bs);
         bool hov = ImGui::IsItemHovered();
         bool clk = ImGui::IsItemClicked();
         ImGui::PopID();
-        if (active)
-            dl->AddRectFilled(bp, bp + bs, u32(p.selected), 4.0f);
-        else if (hov)
-            dl->AddRectFilled(bp, bp + bs, u32(p.button), 4.0f);
-        ImGui::PushFont(fonts::body(), BTN_ICON_PX);
-        ImVec2 ts = ImGui::CalcTextSize(icon);
-        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
-                    u32(hov || active ? p.light : p.subtle_text), icon);
-        ImGui::PopFont();
-        rx = bp.x - 3.0f;
+        if (show_ctl || active) {
+            if (active)
+                dl->AddRectFilled(bp, bp + bs, u32(p.selected), 3.0f);
+            else if (hov)
+                dl->AddRectFilled(bp, bp + bs, u32(p.selected), 3.0f);
+            ImGui::PushFont(fonts::body(), BTN_ICON_PX);
+            ImVec2 ts = ImGui::CalcTextSize(icon);
+            dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
+                        u32(hov || active ? p.light : p.subtle_text), icon);
+            ImGui::PopFont();
+        }
+        rx = bp.x - 2.0f;
         return clk;
     };
 
-    ImGui::PushID((topic + "vp").c_str());
-    bool focused = (g_focus_topic == topic);
     if (hdr_btn("more", ICON_MORE_VERT, false)) ImGui::OpenPopup("vset");
     if (hdr_btn("set", ICON_SETTINGS, ImGui::IsPopupOpen("vset"))) ImGui::OpenPopup("vset");
     if (hdr_btn("exp", focused ? ICON_FULLSCREEN_EXIT : ICON_FULLSCREEN, focused))
@@ -235,12 +245,12 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     if (ImGui::BeginPopup("vset")) {
         ImGui::PushFont(nullptr, theme::size::SMALL);
         ImGui::Dummy(ImVec2(196.0f, 0.0f)); // establish a stable popup width for segmented()
-        ImGui::TextColored(p.subtle_text, "Rotation");
+        ImGui::TextColored(p.subtle_text, "ROTATION");
         static const char* ROT[] = {"0\xc2\xb0", "90\xc2\xb0", "180\xc2\xb0", "270\xc2\xb0"};
         int ri = (((v.rot % 360) + 360) % 360) / 90;
         if (bb::segmented("rot", &ri, ROT, 4)) v.rot = ri * 90;
         ImGui::Dummy(ImVec2(0, 6));
-        ImGui::TextColored(p.subtle_text, "Fit");
+        ImGui::TextColored(p.subtle_text, "FIT");
         static const char* FIT[] = {"Contain", "Cover"};
         bb::segmented("fit", &v.fit, FIT, 2);
         ImGui::PopFont();
@@ -248,9 +258,9 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     }
     ImGui::PopID();
 
-    // Content: letterboxed / cover-scaled frame, clipped to the card body.
-    ImVec2 c0(pos.x + 1.0f, pos.y + HEAD + 1.0f);
-    ImVec2 csz(size.x - 2.0f, size.y - HEAD - 2.0f);
+    // Content: the frame, near-flush to the panel body.
+    ImVec2 c0(pos.x + 2.0f, pos.y + HEAD + 2.0f);
+    ImVec2 csz(size.x - 4.0f, size.y - HEAD - 4.0f);
     if (csz.x < 4.0f || csz.y < 4.0f) return;
     dl->PushClipRect(c0, ImVec2(c0.x + csz.x, c0.y + csz.y), true);
 
@@ -302,28 +312,32 @@ void display(ImVec2 pos, ImVec2 size) {
     }
 
     const auto& vts = g_pb->video_topics();
-    const float pad = 10.0f, gap = 8.0f;
 
     bool focus_valid =
         !g_focus_topic.empty() &&
         std::find(vts.begin(), vts.end(), g_focus_topic) != vts.end();
     if (focus_valid) {
-        video_panel(g_focus_topic, ImVec2(pos.x + pad, pos.y + pad),
-                    ImVec2(size.x - 2 * pad, size.y - 2 * pad));
+        video_panel(g_focus_topic, pos, size);
         ImGui::EndChild();
         return;
     }
 
+    // Blockbench tiles panels flush; the only seams are 1px --color-border.
     int n = (int)vts.size();
     int cols = n == 1 ? 1 : 2;
     int rows = (n + cols - 1) / cols;
-    float cw = (size.x - 2 * pad - gap * (cols - 1)) / cols;
-    float ch = (size.y - 2 * pad - gap * (rows - 1)) / rows;
+    float cw = size.x / cols;
+    float ch = size.y / rows;
     for (int i = 0; i < n; ++i) {
         int gx = i % cols, gy = i / cols;
-        video_panel(vts[i], ImVec2(pos.x + pad + gx * (cw + gap), pos.y + pad + gy * (ch + gap)),
-                    ImVec2(cw, ch));
+        video_panel(vts[i], ImVec2(pos.x + gx * cw, pos.y + gy * ch), ImVec2(cw, ch));
     }
+    for (int c = 1; c < cols; ++c)
+        dl->AddLine(ImVec2(pos.x + c * cw, pos.y), ImVec2(pos.x + c * cw, pos.y + size.y),
+                    u32(p.border), 1.0f);
+    for (int r = 1; r < rows; ++r)
+        dl->AddLine(ImVec2(pos.x, pos.y + r * ch), ImVec2(pos.x + size.x, pos.y + r * ch),
+                    u32(p.border), 1.0f);
 
     ImGui::EndChild();
 }
@@ -635,9 +649,6 @@ void imu_plot(const std::string& topic, float height) {
         dl->AddText(ImVec2(c0.x + 16, ly), u32(acol[axis]), t);
         ly += 14.0f;
     }
-    const char* tag = is_gyro ? "Gyro" : "Acc";
-    ImVec2 tts = ImGui::CalcTextSize(tag);
-    dl->AddText(ImVec2(c1.x - tts.x - 6, c1.y - tts.y - 4), u32(p.subtle_text), tag);
     ImGui::PopFont();
 
     ImGui::Dummy(ImVec2(w, height));
@@ -650,8 +661,8 @@ void audio_panel(float height) {
     float w = ImGui::GetContentRegionAvail().x;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + height), u32(p.deep), theme::RADIUS);
-    ImGui::PushFont(nullptr, theme::size::CAPTION);
-    dl->AddText(ImVec2(pos.x + 6, pos.y + 3), u32(p.subtle_text), "Audio");
+    ImGui::PushFont(fonts::medium(), theme::size::CAPTION);
+    dl->AddText(ImVec2(pos.x + 6, pos.y + 3), u32(p.subtle_text), "AUDIO");
     ImGui::PopFont();
 
     const uint64_t now = g_pb->current_time_us();
@@ -660,9 +671,9 @@ void audio_panel(float height) {
     const float cy = pos.y + height * 0.5f + 5.0f;
     const float amp_h = height * 0.5f - 12.0f;
 
-    // Bucket samples into ~2px columns and draw a peak bar per column so a
+    // Bucket samples into ~3px columns and draw a peak bar per column so a
     // dense recording reads as an envelope, not a solid block.
-    const int cols = std::max(1, (int)(w / 2.0f));
+    const int cols = std::max(1, (int)(w / 3.0f));
     std::vector<float> peak(cols, 0.0f);
     for (const auto& a : hist) {
         if (a.t_us < win_start || a.t_us > now) continue;
@@ -670,7 +681,7 @@ void audio_panel(float height) {
         col = std::clamp(col, 0, cols - 1);
         peak[col] = std::max(peak[col], std::min(a.amp, 1.0f));
     }
-    ImU32 wav = u32(p.subtle_text);
+    ImU32 wav = u32(mix(p.deep, p.subtle_text, 0.7f));
     for (int i = 0; i < cols; ++i) {
         if (peak[i] <= 0.0f) continue;
         float x = pos.x + (i + 0.5f) * (w / cols);
@@ -695,8 +706,8 @@ void sensors_body() {
     for (const auto& t : g_pb->topics()) {
         if (t.rfind("/imu/", 0) != 0) continue;
         any = true;
-        ImGui::PushFont(nullptr, theme::size::SMALL);
-        ImGui::TextColored(p.subtle_text, "%s", short_topic(t));
+        ImGui::PushFont(fonts::medium(), theme::size::CAPTION);
+        ImGui::TextColored(p.subtle_text, "%s", upper(short_topic(t)).c_str());
         ImGui::PopFont();
         imu_plot(t, 120.0f);
         ImGui::Dummy(ImVec2(0, 8));
@@ -731,15 +742,15 @@ void side_panel(ImVec2 pos, ImVec2 size) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
     ImGui::BeginChild("##sidebody", ImVec2(size.x, size.y - head_h), ImGuiChildFlags_None);
 
-    if (bb::collapsing("Topics")) {
+    if (bb::collapsing("TOPICS")) {
         topic_list_body();
         ImGui::Dummy(ImVec2(0, 4));
     }
-    if (bb::collapsing("Inspector")) {
+    if (bb::collapsing("MESSAGE")) {
         inspector_body();
         ImGui::Dummy(ImVec2(0, 4));
     }
-    if (bb::collapsing("Sensors")) {
+    if (bb::collapsing("SENSORS")) {
         sensors_body();
         ImGui::Dummy(ImVec2(0, 4));
     }
