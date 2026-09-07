@@ -326,10 +326,19 @@ int main(int argc, char** argv) {
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // WebGPU manages the context
     glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);   // we draw our own title bar (phase 2)
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);     // show only after we've centred it
 
     GLFWwindow* window = glfwCreateWindow(g_surface_w, g_surface_h, "Blockbench", nullptr, nullptr);
     if (!window)
         return 1;
+
+    // Centre on the primary monitor's work area (borderless windows get no
+    // WM placement, so they land at 0,0 otherwise).
+    if (GLFWmonitor* mon = glfwGetPrimaryMonitor()) {
+        int mx, my, mw, mh;
+        glfwGetMonitorWorkarea(mon, &mx, &my, &mw, &mh);
+        glfwSetWindowPos(window, mx + (mw - g_surface_w) / 2, my + (mh - g_surface_h) / 2);
+    }
 
     if (!init_wgpu(window)) {
         std::fprintf(stderr, "wgpu init failed\n");
