@@ -58,7 +58,7 @@ void rotate_all() {
 
 // Layout metrics. The right panel width is user-draggable.
 constexpr float RAIL_W = 48.0f;
-constexpr float TRANSPORT_H = 54.0f;
+constexpr float TRANSPORT_H = 58.0f;
 constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = 324.0f;
@@ -460,7 +460,7 @@ void transport(ImVec2 pos, ImVec2 size) {
     }
 
     // ── Controls row ───────────────────────────────────────────────────
-    const float row_y = pos.y + 34.0f;
+    const float row_y = pos.y + 37.0f;
 
     auto ico_btn = [&](const char* id, const char* icon, const char* tip, float glyph, bool lit,
                        ImVec2 c, float box = 26.0f) -> bool {
@@ -509,20 +509,20 @@ void transport(ImVec2 pos, ImVec2 size) {
     dl->AddText(snap(ImVec2(pos.x + 38.0f, row_y - th * 0.5f)), u32(p.text), stamp);
     ImGui::PopFont();
 
-    // Centre: skip-start / play / skip-end — the largest controls in the bar.
+    // Centre: skip-start / play / skip-end — the play button is the anchor.
     float mid = pos.x + size.x * 0.5f;
-    if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 26.0f, false,
-                ImVec2(mid - 42.0f, row_y), 32.0f) && ready)
+    if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 24.0f, false,
+                ImVec2(mid - 46.0f, row_y), 30.0f) && ready)
         g_pb->seek(s);
     if (ico_btn("play", ended ? ICON_REPLAY : playing ? ICON_PAUSE : ICON_PLAY,
-                ended ? "Replay" : playing ? "Pause" : "Play", ended ? 25.0f : 30.0f, false,
-                ImVec2(mid, row_y), 34.0f) &&
+                ended ? "Replay" : playing ? "Pause" : "Play", ended ? 30.0f : 34.0f, false,
+                ImVec2(mid, row_y), 42.0f) &&
         ready) {
         if (ended) { g_pb->seek(s); g_pb->play(); }
         else g_pb->toggle();
     }
-    if (ico_btn("last", ICON_SKIP_NEXT, "Jump to end", 26.0f, false,
-                ImVec2(mid + 42.0f, row_y), 32.0f) && ready)
+    if (ico_btn("last", ICON_SKIP_NEXT, "Jump to end", 24.0f, false,
+                ImVec2(mid + 46.0f, row_y), 30.0f) && ready)
         g_pb->seek(s + span);
 
     // Right: loop toggle + speed menu.
