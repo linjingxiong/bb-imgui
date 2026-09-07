@@ -156,15 +156,6 @@ void rail(ImVec2 pos, ImVec2 size) {
 }
 
 // ── Centre video stage ─────────────────────────────────────────────────
-void draw_gizmo(ImVec2 c) {
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float L = 15.0f;
-    dl->AddLine(c, ImVec2(c.x + L, c.y + L * 0.35f), IM_COL32(0xEF, 0x44, 0x44, 220), 2.0f);
-    dl->AddLine(c, ImVec2(c.x, c.y - L), IM_COL32(0x22, 0xC5, 0x5E, 220), 2.0f);
-    dl->AddLine(c, ImVec2(c.x - L, c.y + L * 0.35f), IM_COL32(0x3B, 0x82, 0xF6, 220), 2.0f);
-    dl->AddCircleFilled(c, 2.5f, IM_COL32(230, 230, 230, 255));
-}
-
 void display(ImVec2 pos, ImVec2 size) {
     const theme::Palette& p = theme::palette();
     ImGui::SetCursorScreenPos(pos);
@@ -228,7 +219,6 @@ void display(ImVec2 pos, ImVec2 size) {
         ImGui::PopFont();
     }
 
-    draw_gizmo(ImVec2(pos.x + size.x * 0.5f, pos.y + size.y - 34.0f));
     ImGui::EndChild();
 }
 
@@ -255,14 +245,16 @@ void transport(ImVec2 pos, ImVec2 size) {
     ImGui::InvisibleButton("##play", ImVec2(28.0f, 28.0f));
     bool phov = ImGui::IsItemHovered();
     if (ImGui::IsItemClicked() && has_file()) g_pb->toggle();
-    if (phov) dl->AddCircleFilled(pc, 14.0f, u32(with_alpha(p.selected, 0.6f)));
+    dl->AddCircleFilled(pc, 13.0f, u32(mix(p.ui, p.text, phov ? 0.20f : 0.09f)), 32);
     ImU32 gl = u32(has_file() ? (phov ? p.light : p.text) : p.subtle_text);
     if (has_file() && g_pb->playing()) {
-        dl->AddRectFilled(ImVec2(pc.x - 5, pc.y - 6), ImVec2(pc.x - 1, pc.y + 6), gl);
-        dl->AddRectFilled(ImVec2(pc.x + 1, pc.y - 6), ImVec2(pc.x + 5, pc.y + 6), gl);
+        dl->AddRectFilled(ImVec2(pc.x - 4.5f, pc.y - 5.5f), ImVec2(pc.x - 1.0f, pc.y + 5.5f), gl,
+                          1.0f);
+        dl->AddRectFilled(ImVec2(pc.x + 1.0f, pc.y - 5.5f), ImVec2(pc.x + 4.5f, pc.y + 5.5f), gl,
+                          1.0f);
     } else {
-        dl->AddTriangleFilled(ImVec2(pc.x - 4, pc.y - 7), ImVec2(pc.x - 4, pc.y + 7),
-                              ImVec2(pc.x + 7, pc.y), gl);
+        dl->AddTriangleFilled(ImVec2(pc.x - 3.5f, pc.y - 6.0f), ImVec2(pc.x - 3.5f, pc.y + 6.0f),
+                              ImVec2(pc.x + 6.5f, pc.y), gl);
     }
 
     uint64_t s = 0, span = 1, cur = 0;
@@ -316,10 +308,11 @@ void transport(ImVec2 pos, ImVec2 size) {
             for (; i < 4; ++i) if (SPEEDS[i] == g_pb->speed()) break;
             g_pb->set_speed(SPEEDS[(i + 1) % 4]);
         }
-        dl->AddRectFilled(bp, bp + bs, u32(hov ? p.selected : p.button), 4.0f);
+        if (hov) dl->AddRectFilled(bp, bp + bs, u32(p.selected), 6.0f);
+        else dl->AddRect(bp, bp + bs, u32(with_alpha(p.subtle_text, 0.45f)), 6.0f, 0, 1.0f);
         ImVec2 ts = ImGui::CalcTextSize(sp);
-        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f), u32(p.text),
-                    sp);
+        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
+                    u32(hov ? p.light : p.text), sp);
         ImGui::PopFont();
         right = bp.x - 12.0f;
     }
@@ -332,58 +325,54 @@ void transport(ImVec2 pos, ImVec2 size) {
     float ty = cy;                    // baseline
     float px = tx0 + tw * frac;       // playhead x
 
-    // Faint full-height cursor line.
-    dl->AddLine(ImVec2(px, pos.y + 6.0f), ImVec2(px, pos.y + size.y - 4.0f),
-                u32(with_alpha(p.light, 0.25f)), 1.0f);
-
     // Scrub hit box (covers the whole bar + a little slop above/below).
-    ImGui::SetCursorScreenPos(ImVec2(tx0, ty - 11.0f));
-    ImGui::InvisibleButton("##scrub", ImVec2(tw, 22.0f));
+    ImGui::SetCursorScreenPos(ImVec2(tx0, ty - 12.0f));
+    ImGui::InvisibleButton("##scrub", ImVec2(tw, 24.0f));
     bool shov = ImGui::IsItemHovered() || ImGui::IsItemActive();
     if (ImGui::IsItemActive()) {
         float rel = std::clamp((ImGui::GetIO().MousePos.x - tx0) / tw, 0.0f, 1.0f);
         g_pb->seek(s + (uint64_t)(rel * span));
     }
 
-    // Filled progress bar: a rounded dark track with an accent-filled
-    // played portion. Brightens slightly on hover.
-    const float bh = shov ? 6.0f : 5.0f;   // bar height
-    const float br = bh * 0.5f;             // fully-rounded caps
-    ImU32 track_c = u32(shov ? mix(p.deep, p.light, 0.10f) : p.deep);
-    ImU32 fill_c = u32(shov ? mix(p.accent, p.light, 0.15f) : p.accent);
-    dl->AddRectFilled(ImVec2(tx0, ty - br), ImVec2(tx1, ty + br), track_c, br);
-    if (px > tx0 + 0.5f)
-        dl->AddRectFilled(ImVec2(tx0, ty - br), ImVec2(std::max(px, tx0 + bh), ty + br), fill_c, br);
+    // Progress bar: a mid-grey rounded track; the played portion is a lighter
+    // fill with only its left corners rounded (its flat right edge is hidden
+    // under the playhead handle, so there's no half-pill nub mid-track).
+    const float hh = 2.5f;                       // track half-height (5px)
+    ImU32 track_c = u32(mix(p.ui, p.text, shov ? 0.44f : 0.36f));
+    ImU32 fill_c = u32(shov ? mix(p.text, p.light, 0.6f) : mix(p.text, p.light, 0.3f));
+    dl->AddRectFilled(ImVec2(tx0, ty - hh), ImVec2(tx1, ty + hh), track_c, hh);
+    if (px > tx0 + 1.0f)
+        dl->AddRectFilled(ImVec2(tx0, ty - hh), ImVec2(px, ty + hh), fill_c, hh,
+                          ImDrawFlags_RoundCornersLeft);
 
-    // Ruler: minor ticks + labelled major ticks (>= 1s apart), below the bar.
-    ImGui::PushFont(nullptr, theme::size::SMALL * 0.8f);
+    // Playhead handle: a white vertical rounded bar taller than the track,
+    // wrapped in an opaque dark outline so it reads over the light fill, the
+    // grey track and the dark bar background alike.
+    const float hw = 3.0f;
+    const float ext = shov ? 6.0f : 4.5f;       // overhang past the track
+    float hy0 = ty - hh - ext, hy1 = ty + hh + ext;
+    dl->AddRectFilled(ImVec2(px - hw * 0.5f - 1.5f, hy0 - 1.5f),
+                      ImVec2(px + hw * 0.5f + 1.5f, hy1 + 1.5f), u32(p.deep), hw * 0.5f + 1.5f);
+    dl->AddRectFilled(ImVec2(px - hw * 0.5f, hy0), ImVec2(px + hw * 0.5f, hy1), u32(p.light),
+                      hw * 0.5f);
+
+    // Ruler: faint labelled ticks (>= 1s apart) below the bar.
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.78f);
     double span_s = span / 1e6;
-    double major = std::max(1.0, nice_interval(span_s, std::max(2, (int)(tw / 110.0f))));
-    double minor = major / (major >= 4.0 ? 4.0 : 2.0);
-    float tick_top = ty + br + 2.0f;
-    ImU32 tick_c = u32(with_alpha(p.subtle_text, 0.7f));
-    for (double t = minor; t <= span_s + 1e-6; t += minor) {
-        if (std::fmod(t + 1e-6, major) < 2e-6) continue; // major drawn below
-        float x = tx0 + (float)(t / span_s) * tw;
-        dl->AddLine(ImVec2(x, tick_top), ImVec2(x, tick_top + 2.5f), tick_c, 1.0f);
-    }
+    double major = std::max(1.0, nice_interval(span_s, std::max(2, (int)(tw / 116.0f))));
+    float tick_top = ty + hh + 5.0f;
+    ImU32 tick_c = u32(with_alpha(p.subtle_text, 0.4f));
+    ImU32 lbl_c = u32(with_alpha(p.subtle_text, 0.85f));
     for (double t = 0.0; t <= span_s + 1e-6; t += major) {
         float x = tx0 + (float)(t / span_s) * tw;
-        dl->AddLine(ImVec2(x, tick_top), ImVec2(x, tick_top + 4.0f), u32(p.subtle_text), 1.0f);
+        dl->AddLine(ImVec2(x, tick_top), ImVec2(x, tick_top + 3.0f), tick_c, 1.0f);
         char lb[16];
         fmt_tick(lb, sizeof(lb), t);
         ImVec2 ls = ImGui::CalcTextSize(lb);
         float lx = std::clamp(x - ls.x * 0.5f, tx0, tx0 + tw - ls.x);
-        dl->AddText(ImVec2(lx, tick_top + 6.0f), u32(p.subtle_text), lb);
+        dl->AddText(ImVec2(lx, tick_top + 5.0f), lbl_c, lb);
     }
     ImGui::PopFont();
-
-    // Diamond playhead on top, at the fill's leading edge.
-    float d = shov ? 6.5f : 5.0f;
-    dl->AddQuadFilled(ImVec2(px, ty - d), ImVec2(px + d, ty), ImVec2(px, ty + d),
-                      ImVec2(px - d, ty), u32(p.light));
-    dl->AddQuad(ImVec2(px, ty - d), ImVec2(px + d, ty), ImVec2(px, ty + d), ImVec2(px - d, ty),
-                u32(p.ui), 1.0f);
 
     ImGui::EndChild();
 }
