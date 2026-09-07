@@ -62,7 +62,7 @@ constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = 324.0f;
 
 // Icon sizes (Blockbench: .material-icons 22px, .tool 36x30).
-constexpr float RAIL_ICON_PX = 20.0f;
+constexpr float RAIL_ICON_PX = 24.0f;
 
 // Per-axis plot colours — Blockbench's viewport axis colours (css/setup.css
 // --color-axis-{x,y,z}), same triplet EgoViewer's SensorPanel uses.
@@ -151,7 +151,7 @@ void rail(ImVec2 pos, ImVec2 size) {
     ImGui::BeginChild("##rail", size, ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-    const float BTN_H = 44.0f;
+    const float BTN_H = 42.0f;
     auto rail_btn = [&](const char* icon, const char* tip, bool active) -> bool {
         ImVec2 bp = ImGui::GetCursorScreenPos();
         ImVec2 bs(size.x, BTN_H);
