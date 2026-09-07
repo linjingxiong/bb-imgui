@@ -223,12 +223,12 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
                 u32(p.subtle_text), upper(topic).c_str());
     ImGui::PopFont();
 
-    // Controls — always shown (Blockbench .panel_control opacity 0.7), full
-    // on hover / active.
+    // Controls — always shown; Blockbench .panel_control brightens on hover
+    // (opacity only, no background) and surfaces a tooltip.
     ImGui::PushID((topic + "vp").c_str());
     const float ICON = 18.0f;
     float rx = pos.x + size.x - 4.0f;
-    auto hdr_btn = [&](const char* tag, const char* icon, bool active) -> bool {
+    auto hdr_btn = [&](const char* tag, const char* icon, const char* tip, bool active) -> bool {
         ImVec2 bs(24.0f, 24.0f);
         ImVec2 bp = snap(ImVec2(rx - bs.x, pos.y + (HEAD - bs.y) * 0.5f));
         ImGui::PushID(tag);
@@ -237,19 +237,20 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         bool hov = ImGui::IsItemHovered();
         bool clk = ImGui::IsItemClicked();
         ImGui::PopID();
-        if (hov || active)
-            dl->AddRectFilled(bp, bp + bs, u32(p.selected), 3.0f);
-        // Blockbench .panel_control: --color-text at opacity 0.7 -> 1 on hover.
-        ImVec4 c = (hov || active) ? p.light
-                                   : ImVec4(p.text.x, p.text.y, p.text.z, 0.8f);
+        if (hov && tip) ImGui::SetTooltip("%s", tip);
+        ImVec4 c = active ? p.accent
+                          : hov ? p.light : ImVec4(p.text.x, p.text.y, p.text.z, 0.8f);
         icon_centered(dl, icon, bp, bp + bs, ICON, u32(c));
         rx = bp.x;
         return clk;
     };
 
-    if (hdr_btn("more", ICON_MORE_VERT, false)) ImGui::OpenPopup("vset");
-    if (hdr_btn("set", ICON_SETTINGS, ImGui::IsPopupOpen("vset"))) ImGui::OpenPopup("vset");
-    if (hdr_btn("exp", focused ? ICON_CLOSE_FULLSCREEN : ICON_OPEN_IN_FULL, focused))
+    if (hdr_btn("more", ICON_MORE_VERT, "Panel menu", ImGui::IsPopupOpen("vset")))
+        ImGui::OpenPopup("vset");
+    if (hdr_btn("set", ICON_SETTINGS, "Panel settings", ImGui::IsPopupOpen("vset")))
+        ImGui::OpenPopup("vset");
+    if (hdr_btn("exp", focused ? ICON_CLOSE_FULLSCREEN : ICON_OPEN_IN_FULL,
+                focused ? "Exit fullscreen" : "Fullscreen", focused))
         g_focus_topic = focused ? std::string() : topic;
 
     ImGui::SetNextWindowPos(ImVec2(pos.x + size.x - 6.0f, pos.y + HEAD + 4.0f), ImGuiCond_Always,
