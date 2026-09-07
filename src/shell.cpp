@@ -27,6 +27,8 @@ int                g_tab_count = 0;
 int                g_tab_active = 0;
 
 Mode g_mode = Mode::Edit;
+Chrome g_chrome = Chrome::Full;
+ImVec2 g_content_pos(0, 0), g_content_size(0, 0);
 
 const char*    g_status_left = "";
 const char*    g_status_right = "";
@@ -480,12 +482,22 @@ ImGuiID begin(GLFWwindow* window) {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                              ImGuiWindowFlags_NoBringToFrontOnFocus |
-                             ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking;
+                             ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking |
+                             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     ImGui::Begin("##host", nullptr, flags);
     ImGui::PopStyleVar(3);
 
     resize_handles(window);
     titlebar(window);
+
+    if (g_chrome == Chrome::Minimal) {
+        g_first_run = false;
+        g_content_pos = ImVec2(vp->Pos.x, vp->Pos.y + TITLEBAR_H);
+        g_content_size = ImVec2(vp->Size.x, vp->Size.y - TITLEBAR_H);
+        ImGui::SetCursorScreenPos(g_content_pos);
+        return 0;
+    }
+
     tab_bar();
     status_bar();
 
@@ -499,7 +511,16 @@ ImGuiID begin(GLFWwindow* window) {
 
     ImGui::SetCursorScreenPos(ImVec2(vp->Pos.x, vp->Pos.y + top));
     ImGui::DockSpace(dock_id, dock_size, ImGuiDockNodeFlags_None);
+    g_content_pos = ImVec2(vp->Pos.x, vp->Pos.y + top);
+    g_content_size = dock_size;
     return dock_id;
+}
+
+void set_chrome(Chrome c) { g_chrome = c; }
+Chrome chrome() { return g_chrome; }
+void content_rect(ImVec2* pos, ImVec2* size) {
+    if (pos) *pos = g_content_pos;
+    if (size) *size = g_content_size;
 }
 
 void end() { ImGui::End(); }

@@ -10,6 +10,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <map>
 #include <memory>
@@ -37,12 +38,21 @@ int g_rotation = 90; // degrees CW — the Ego device's cameras are mounted side
 // shrinks (EgoViewer's accMaxSeen_/gyroMaxSeen_). Reset on file open.
 std::map<std::string, float> g_imu_scale;
 
+// Layout metrics (Ohwow reference). The right panel width is user-draggable.
+constexpr float RAIL_W = 48.0f;
+constexpr float TRANSPORT_H = 50.0f;
+constexpr float PANEL_W_MIN = 260.0f;
+constexpr float PANEL_W_MAX = 640.0f;
+float g_panel_w = 324.0f;
+
 // EgoViewer SensorPanel axis colours (softer than theme::axis).
 const ImVec4 kAxisR = ImVec4(0xEF / 255.0f, 0x44 / 255.0f, 0x44 / 255.0f, 1.0f);
 const ImVec4 kAxisG = ImVec4(0x22 / 255.0f, 0xC5 / 255.0f, 0x5E / 255.0f, 1.0f);
 const ImVec4 kAxisB = ImVec4(0x3B / 255.0f, 0x82 / 255.0f, 0xF6 / 255.0f, 1.0f);
 
 ImU32 u32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
+ImVec4 with_alpha(const ImVec4& c, float a) { return ImVec4(c.x, c.y, c.z, a); }
+ImVec2 operator+(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x + b.x, a.y + b.y); }
 
 // Draw a texture into `size` at the current cursor, rotated `rot` degrees CW.
 void draw_video(ImVec2 size, ImTextureID tex, int rot) {
@@ -61,22 +71,572 @@ void draw_video(ImVec2 size, ImTextureID tex, int rot) {
     ImGui::Dummy(size);
 }
 
-void fmt_time(char* buf, size_t n, uint64_t us) {
-    uint64_t total_ms = us / 1000;
-    uint64_t ms = total_ms % 1000;
-    uint64_t s = (total_ms / 1000) % 60;
-    uint64_t m = (total_ms / 60000) % 60;
-    uint64_t h = total_ms / 3600000;
-    if (h > 0) std::snprintf(buf, n, "%llu:%02llu:%02llu.%03llu",
-                             (unsigned long long)h, (unsigned long long)m,
-                             (unsigned long long)s, (unsigned long long)ms);
-    else std::snprintf(buf, n, "%02llu:%02llu.%03llu", (unsigned long long)m,
-                       (unsigned long long)s, (unsigned long long)ms);
+// A short mm:ss for the timeline tick labels.
+void fmt_tick(char* buf, size_t n, double s) {
+    int m = (int)(s / 60.0);
+    int sec = (int)(s - m * 60.0);
+    std::snprintf(buf, n, "%d:%02d", m, sec);
 }
 
 const char* short_topic(const std::string& t) {
     auto pos = t.find_last_of('/');
     return pos == std::string::npos ? t.c_str() : t.c_str() + pos + 1;
+}
+
+// A "nice" tick interval (seconds) so the timeline shows ~`want` labels.
+double nice_interval(double span_s, int want) {
+    if (span_s <= 0 || want <= 0) return 1.0;
+    double raw = span_s / want;
+    double mag = std::pow(10.0, std::floor(std::log10(raw)));
+    double n = raw / mag;
+    double step = n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10;
+    return step * mag;
+}
+
+// ── Left icon rail ──────────────────────────────────────────────────────
+void rail(ImVec2 pos, ImVec2 size) {
+    const theme::Palette& p = theme::palette();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, pos + size, u32(p.frame));
+    dl->AddLine(ImVec2(pos.x + size.x - 0.5f, pos.y), ImVec2(pos.x + size.x - 0.5f, pos.y + size.y),
+                u32(p.border), 1.0f);
+
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::BeginChild("##rail", size, ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    const float BTN_H = 44.0f;
+    auto rail_btn = [&](const char* icon, const char* tip, bool active) -> bool {
+        ImVec2 bp = ImGui::GetCursorScreenPos();
+        ImVec2 bs(size.x, BTN_H);
+        ImGui::InvisibleButton(icon, bs);
+        bool hov = ImGui::IsItemHovered();
+        bool clk = ImGui::IsItemClicked();
+        if (active)
+            dl->AddRectFilled(bp, bp + bs, u32(p.selected));
+        else if (hov)
+            dl->AddRectFilled(bp, bp + bs, u32(with_alpha(p.selected, 0.5f)));
+        if (active)
+            dl->AddRectFilled(bp, ImVec2(bp.x + 2.0f, bp.y + bs.y), u32(p.accent));
+        ImGui::PushFont(fonts::body(), 20.0f);
+        ImVec2 ts = ImGui::CalcTextSize(icon);
+        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
+                    u32(hov || active ? p.light : p.text), icon);
+        ImGui::PopFont();
+        if (hov && tip) ImGui::SetTooltip("%s", tip);
+        return clk;
+    };
+    auto rail_sep = [&] {
+        ImVec2 c = ImGui::GetCursorScreenPos();
+        dl->AddLine(ImVec2(c.x + 10, c.y + 4), ImVec2(c.x + size.x - 10, c.y + 4), u32(p.border));
+        ImGui::Dummy(ImVec2(0, 9));
+    };
+
+    if (rail_btn(ICON_ARROW_BACK, "Close recording", false)) {
+        if (g_pb) g_pb->close();
+        g_textures.clear();
+        g_selected_topic.clear();
+        g_imu_scale.clear();
+    }
+    rail_sep();
+    if (rail_btn(ICON_FOLDER_OPEN, "Open MCAP\xe2\x80\xa6", false)) open_dialog();
+    if (rail_btn(ICON_ROTATE, "Rotate video 90\xc2\xb0", false)) g_rotation = (g_rotation + 90) % 360;
+    if (rail_btn(ICON_TIMELINE, "Sensors", false)) {}
+
+    // Bottom group.
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + size.y - BTN_H * 2.0f));
+    if (rail_btn(ICON_PALETTE, "Cycle theme", false)) theme::cycle();
+    if (rail_btn(ICON_HELP, "About", false)) {}
+
+    ImGui::EndChild();
+}
+
+// ── Centre video stage ─────────────────────────────────────────────────
+void draw_gizmo(ImVec2 c) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float L = 15.0f;
+    dl->AddLine(c, ImVec2(c.x + L, c.y + L * 0.35f), IM_COL32(0xEF, 0x44, 0x44, 220), 2.0f);
+    dl->AddLine(c, ImVec2(c.x, c.y - L), IM_COL32(0x22, 0xC5, 0x5E, 220), 2.0f);
+    dl->AddLine(c, ImVec2(c.x - L, c.y + L * 0.35f), IM_COL32(0x3B, 0x82, 0xF6, 220), 2.0f);
+    dl->AddCircleFilled(c, 2.5f, IM_COL32(230, 230, 230, 255));
+}
+
+void display(ImVec2 pos, ImVec2 size) {
+    const theme::Palette& p = theme::palette();
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::BeginChild("##display", size, ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, pos + size, IM_COL32(9, 9, 9, 255)); // near-black stage
+
+    const bool ready = has_file() && !g_pb->video_topics().empty();
+    if (!ready) {
+        const char* line1 = has_file() ? "This recording has no /camera/* video." : "No recording open";
+        const char* line2 = has_file() ? "" : "Open a .mcap from the rail on the left.";
+        ImGui::PushFont(fonts::medium(), theme::size::HEADING);
+        ImVec2 t1 = ImGui::CalcTextSize(line1);
+        dl->AddText(ImVec2(pos.x + (size.x - t1.x) * 0.5f, pos.y + size.y * 0.5f - 24),
+                    u32(p.subtle_text), line1);
+        ImGui::PopFont();
+        if (line2[0]) {
+            ImGui::PushFont(nullptr, theme::size::SMALL);
+            ImVec2 t2 = ImGui::CalcTextSize(line2);
+            dl->AddText(ImVec2(pos.x + (size.x - t2.x) * 0.5f, pos.y + size.y * 0.5f + 4),
+                        u32(p.subtle_text), line2);
+            ImGui::PopFont();
+        }
+        ImGui::EndChild();
+        return;
+    }
+
+    const auto& vts = g_pb->video_topics();
+    int n = (int)vts.size();
+    int cols = n == 1 ? 1 : 2;
+    int rows = (n + cols - 1) / cols;
+    const float pad = 12.0f, gap = 8.0f;
+    float cw = (size.x - 2 * pad - gap * (cols - 1)) / cols;
+    float ch = (size.y - 2 * pad - gap * (rows - 1)) / rows;
+    bool rot90 = (((g_rotation % 360) + 360) % 360) % 180 != 0;
+
+    for (int i = 0; i < n; ++i) {
+        const std::string& topic = vts[i];
+        int gx = i % cols, gy = i / cols;
+        ImVec2 cell(pos.x + pad + gx * (cw + gap), pos.y + pad + gy * (ch + gap));
+
+        auto& tex = g_textures[topic];
+        if (!tex) tex = std::make_unique<mp::VideoTexture>(g_device, g_queue);
+        if (auto frame = g_pb->latest_frame(topic)) tex->update(frame);
+
+        float tw = rot90 ? (float)tex->height() : (float)tex->width();
+        float th = rot90 ? (float)tex->width() : (float)tex->height();
+        if (!tex->valid() || tw <= 0 || th <= 0) { tw = 16.0f; th = 9.0f; }
+        float sc = std::min(cw / tw, ch / th);
+        float dw = tw * sc, dh = th * sc;
+        ImVec2 ip(cell.x + (cw - dw) * 0.5f, cell.y + (ch - dh) * 0.5f);
+
+        if (tex->valid()) {
+            ImGui::SetCursorScreenPos(ip);
+            draw_video(ImVec2(dw, dh), tex->id(), g_rotation);
+        }
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        dl->AddText(ImVec2(cell.x + 4, cell.y + 2), u32(with_alpha(p.light, 0.75f)),
+                    short_topic(topic));
+        ImGui::PopFont();
+    }
+
+    draw_gizmo(ImVec2(pos.x + size.x * 0.5f, pos.y + size.y - 34.0f));
+    ImGui::EndChild();
+}
+
+// ── Bottom transport bar ───────────────────────────────────────────────
+// Layout follows the Ohwow reference: a bare play/pause glyph at the far
+// left, a H.MM.SS timecode, then a full-width ruler — a hairline baseline
+// with evenly spaced ticks + m:ss labels underneath and a diamond playhead
+// riding a faint vertical cursor line. Speed + rotate sit at the far right.
+void transport(ImVec2 pos, ImVec2 size) {
+    const theme::Palette& p = theme::palette();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, pos + size, u32(p.ui));
+    dl->AddLine(pos, ImVec2(pos.x + size.x, pos.y), u32(p.border), 1.0f);
+
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::BeginChild("##transport", size, ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    const float cy = pos.y + size.y * 0.5f - 4.0f; // controls row (ruler sits below)
+
+    // Play / pause — a bare glyph with a subtle hover disc.
+    ImVec2 pc(pos.x + 24.0f, cy);
+    ImGui::SetCursorScreenPos(ImVec2(pc.x - 14.0f, pc.y - 14.0f));
+    ImGui::InvisibleButton("##play", ImVec2(28.0f, 28.0f));
+    bool phov = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked() && has_file()) g_pb->toggle();
+    if (phov) dl->AddCircleFilled(pc, 14.0f, u32(with_alpha(p.selected, 0.6f)));
+    ImU32 gl = u32(has_file() ? (phov ? p.light : p.text) : p.subtle_text);
+    if (has_file() && g_pb->playing()) {
+        dl->AddRectFilled(ImVec2(pc.x - 5, pc.y - 6), ImVec2(pc.x - 1, pc.y + 6), gl);
+        dl->AddRectFilled(ImVec2(pc.x + 1, pc.y - 6), ImVec2(pc.x + 5, pc.y + 6), gl);
+    } else {
+        dl->AddTriangleFilled(ImVec2(pc.x - 4, pc.y - 7), ImVec2(pc.x - 4, pc.y + 7),
+                              ImVec2(pc.x + 7, pc.y), gl);
+    }
+
+    uint64_t s = 0, span = 1, cur = 0;
+    if (has_file()) {
+        uint64_t e = g_pb->end_time_us();
+        s = g_pb->start_time_us();
+        span = e > s ? e - s : 1;
+        cur = std::clamp<uint64_t>(g_pb->current_time_us(), s, s + span);
+    }
+    float frac = std::clamp((float)(cur - s) / (float)span, 0.0f, 1.0f);
+
+    // Timecode H.MM.SS (dots, no milliseconds — matches the reference).
+    uint64_t cs = (cur - s) / 1'000'000;
+    char tc[24];
+    std::snprintf(tc, sizeof(tc), "%llu.%02llu.%02llu", (unsigned long long)(cs / 3600),
+                  (unsigned long long)((cs / 60) % 60), (unsigned long long)(cs % 60));
+    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+    float tc_w = ImGui::CalcTextSize(tc).x;
+    dl->AddText(ImVec2(pos.x + 46.0f, cy - ImGui::GetTextLineHeight() * 0.5f), u32(p.light), tc);
+    ImGui::PopFont();
+
+    // Right-side controls: speed pill + rotate.
+    float right = pos.x + size.x - 14.0f;
+    {
+        ImVec2 bs(26, 26);
+        ImVec2 bp(right - bs.x, cy - bs.y * 0.5f);
+        ImGui::SetCursorScreenPos(bp);
+        ImGui::InvisibleButton("##rot", bs);
+        bool hov = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) g_rotation = (g_rotation + 90) % 360;
+        ImGui::PushFont(fonts::body(), 17.0f);
+        ImVec2 ts = ImGui::CalcTextSize(ICON_ROTATE);
+        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
+                    u32(hov ? p.light : p.text), ICON_ROTATE);
+        ImGui::PopFont();
+        right = bp.x - 6.0f;
+    }
+    {
+        static const float SPEEDS[] = {0.5f, 1.0f, 2.0f, 4.0f};
+        char sp[8];
+        std::snprintf(sp, sizeof(sp), "%gx", has_file() ? g_pb->speed() : 1.0f);
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        float w = ImGui::CalcTextSize(sp).x + 16.0f;
+        ImVec2 bs(w, 22);
+        ImVec2 bp(right - w, cy - bs.y * 0.5f);
+        ImGui::SetCursorScreenPos(bp);
+        ImGui::InvisibleButton("##spd", bs);
+        bool hov = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked() && has_file()) {
+            int i = 0;
+            for (; i < 4; ++i) if (SPEEDS[i] == g_pb->speed()) break;
+            g_pb->set_speed(SPEEDS[(i + 1) % 4]);
+        }
+        dl->AddRectFilled(bp, bp + bs, u32(hov ? p.selected : p.button), 4.0f);
+        ImVec2 ts = ImGui::CalcTextSize(sp);
+        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f), u32(p.text),
+                    sp);
+        ImGui::PopFont();
+        right = bp.x - 12.0f;
+    }
+
+    // ── Ruler ──────────────────────────────────────────────────────────
+    float tx0 = pos.x + 46.0f + tc_w + 18.0f;
+    float tx1 = right;
+    float tw = tx1 - tx0;
+    if (tw < 40.0f || !has_file()) { ImGui::EndChild(); return; }
+    float ty = cy;                    // baseline
+    float px = tx0 + tw * frac;       // playhead x
+
+    // Faint full-height cursor line.
+    dl->AddLine(ImVec2(px, pos.y + 6.0f), ImVec2(px, pos.y + size.y - 4.0f),
+                u32(with_alpha(p.light, 0.25f)), 1.0f);
+
+    // Baseline + played portion.
+    dl->AddLine(ImVec2(tx0, ty), ImVec2(tx1, ty), u32(p.border), 1.0f);
+    dl->AddLine(ImVec2(tx0, ty), ImVec2(px, ty), u32(with_alpha(p.light, 0.5f)), 1.0f);
+
+    // Ruler: minor ticks + labelled major ticks (>= 1s apart).
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.8f);
+    double span_s = span / 1e6;
+    double major = std::max(1.0, nice_interval(span_s, std::max(2, (int)(tw / 110.0f))));
+    double minor = major / (major >= 4.0 ? 4.0 : 2.0);
+    ImU32 tick_c = u32(with_alpha(p.subtle_text, 0.7f));
+    for (double t = minor; t <= span_s + 1e-6; t += minor) {
+        if (std::fmod(t + 1e-6, major) < 2e-6) continue; // major drawn below
+        float x = tx0 + (float)(t / span_s) * tw;
+        dl->AddLine(ImVec2(x, ty - 2.0f), ImVec2(x, ty + 2.0f), tick_c, 1.0f);
+    }
+    for (double t = 0.0; t <= span_s + 1e-6; t += major) {
+        float x = tx0 + (float)(t / span_s) * tw;
+        dl->AddLine(ImVec2(x, ty - 3.0f), ImVec2(x, ty + 3.0f), u32(p.subtle_text), 1.0f);
+        char lb[16];
+        fmt_tick(lb, sizeof(lb), t);
+        ImVec2 ls = ImGui::CalcTextSize(lb);
+        float lx = std::clamp(x - ls.x * 0.5f, tx0, tx0 + tw - ls.x);
+        dl->AddText(ImVec2(lx, ty + 6.0f), u32(p.subtle_text), lb);
+    }
+    ImGui::PopFont();
+
+    // Scrub hit box + diamond playhead.
+    ImGui::SetCursorScreenPos(ImVec2(tx0, ty - 11.0f));
+    ImGui::InvisibleButton("##scrub", ImVec2(tw, 22.0f));
+    bool shov = ImGui::IsItemHovered() || ImGui::IsItemActive();
+    if (ImGui::IsItemActive()) {
+        float rel = std::clamp((ImGui::GetIO().MousePos.x - tx0) / tw, 0.0f, 1.0f);
+        g_pb->seek(s + (uint64_t)(rel * span));
+    }
+    float d = shov ? 6.0f : 4.5f;
+    dl->AddQuadFilled(ImVec2(px, ty - d), ImVec2(px + d, ty), ImVec2(px, ty + d),
+                      ImVec2(px - d, ty), u32(p.light));
+
+    ImGui::EndChild();
+}
+
+// ── Right panel sections ───────────────────────────────────────────────
+void topic_list_body() {
+    const theme::Palette& p = theme::palette();
+    if (!has_file()) {
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::TextColored(p.subtle_text, "No file open.");
+        ImGui::PopFont();
+        return;
+    }
+    for (const auto& t : g_pb->topics()) {
+        char cnt[24];
+        std::snprintf(cnt, sizeof(cnt), "%llu", (unsigned long long)g_pb->message_count(t));
+        bool sel = (t == g_selected_topic);
+
+        float w = ImGui::GetContentRegionAvail().x;
+        ImVec2 rp = ImGui::GetCursorScreenPos();
+        ImGui::PushID(t.c_str());
+        ImGui::InvisibleButton("row", ImVec2(w, 24.0f));
+        bool hov = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) g_selected_topic = sel ? std::string() : t;
+        ImGui::PopID();
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (sel)
+            dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + 24.0f), u32(p.selected), 3.0f);
+        else if (hov)
+            dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + 24.0f), u32(with_alpha(p.selected, 0.4f)),
+                              3.0f);
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        float th = ImGui::GetTextLineHeight();
+        dl->AddText(ImVec2(rp.x + 6, rp.y + (24.0f - th) * 0.5f),
+                    u32(sel || hov ? p.light : p.text), t.c_str());
+        ImVec2 cs = ImGui::CalcTextSize(cnt);
+        dl->AddText(ImVec2(rp.x + w - cs.x - 6, rp.y + (24.0f - th) * 0.5f), u32(p.subtle_text),
+                    cnt);
+        ImGui::PopFont();
+    }
+}
+
+void inspector_body() {
+    const theme::Palette& p = theme::palette();
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    if (!has_file()) {
+        ImGui::TextColored(p.subtle_text, "Open a recording, then pick a topic.");
+        ImGui::PopFont();
+        return;
+    }
+    if (g_selected_topic.empty()) {
+        ImGui::TextColored(p.subtle_text, "Select a topic above.");
+        ImGui::PopFont();
+        return;
+    }
+    ImGui::PopFont();
+    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+    ImGui::TextWrapped("%s", g_selected_topic.c_str());
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, 3));
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    std::string summary = g_pb->latest_summary(g_selected_topic);
+    ImGui::TextColored(p.text, "%s", summary.empty() ? "(no message yet)" : summary.c_str());
+    ImGui::Dummy(ImVec2(0, 3));
+    char cnt[48];
+    std::snprintf(cnt, sizeof(cnt), "%llu messages dispatched",
+                  (unsigned long long)g_pb->message_count(g_selected_topic));
+    ImGui::TextColored(p.subtle_text, "%s", cnt);
+    ImGui::PopFont();
+}
+
+// An x/y/z chart for one IMU topic, modelled on EgoViewer's
+// SensorPanel::drawAxisLegendChart (5s window, RAW values, adaptive
+// symmetric Y scale, faint grid, colour/letter/value legend, "Acc"/"Gyro").
+void imu_plot(const std::string& topic, float height) {
+    const theme::Palette& p = theme::palette();
+    auto hist = g_pb->imu_history(topic);
+    auto latest = g_pb->imu_latest(topic);
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    const uint64_t now = g_pb->current_time_us();
+    const uint64_t window_us = 5'000'000;
+    const uint64_t win_start = now > window_us ? now - window_us : 0;
+
+    const bool is_gyro = topic.find("gyro") != std::string::npos;
+    float& scale = g_imu_scale[topic];
+    if (scale <= 0.0f) scale = is_gyro ? 1.0f : 15.0f;
+    for (const auto& s : hist) {
+        if (s.t_us < win_start || s.t_us > now) continue;
+        scale = std::max({scale, (float)std::abs(s.x), (float)std::abs(s.y),
+                          (float)std::abs(s.z)});
+    }
+
+    const float y_label_w = 30.0f;
+    ImVec2 c0(pos.x + y_label_w, pos.y + 4.0f);
+    ImVec2 c1(pos.x + w, pos.y + height - 4.0f);
+    dl->AddRectFilled(c0, c1, u32(p.deep));
+
+    const ImU32 grid = IM_COL32(255, 255, 255, 22);
+    for (int i = 0; i <= 5; ++i) {
+        float gx = c0.x + (c1.x - c0.x) * i / 5.0f;
+        dl->AddLine(ImVec2(gx, c0.y), ImVec2(gx, c1.y), grid, 1.0f);
+    }
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.8f);
+    int dec = scale >= 10 ? 0 : (scale >= 1 ? 1 : 2);
+    for (int i = 0; i <= 4; ++i) {
+        float f = 1.0f - i / 2.0f;
+        float gy = c0.y + (c1.y - c0.y) * i / 4.0f;
+        dl->AddLine(ImVec2(c0.x, gy), ImVec2(c1.x, gy), grid, 1.0f);
+        char lbl[16];
+        std::snprintf(lbl, sizeof(lbl), "%.*f", dec, f * scale);
+        ImVec2 ts = ImGui::CalcTextSize(lbl);
+        dl->AddText(ImVec2(pos.x + y_label_w - 4 - ts.x, gy - ts.y * 0.5f), u32(p.subtle_text),
+                    lbl);
+    }
+    ImGui::PopFont();
+
+    auto X = [&](uint64_t t) {
+        return c1.x - (float)((double)(now - t) / (double)window_us) * (c1.x - c0.x);
+    };
+    float mid = (c0.y + c1.y) * 0.5f;
+    auto Y = [&](double v) {
+        double norm = std::clamp(v / scale, -1.0, 1.0);
+        return mid - (float)norm * (c1.y - c0.y) * 0.48f;
+    };
+
+    const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
+    dl->PushClipRect(c0, c1, true);
+    for (int axis = 0; axis < 3; ++axis) {
+        ImU32 col = u32(ImVec4(acol[axis].x, acol[axis].y, acol[axis].z, 0.9f));
+        bool have_prev = false;
+        ImVec2 prev;
+        for (const auto& s : hist) {
+            if (s.t_us < win_start || s.t_us > now) { have_prev = false; continue; }
+            double raw = axis == 0 ? s.x : axis == 1 ? s.y : s.z;
+            ImVec2 pt(X(s.t_us), Y(raw));
+            if (have_prev) dl->AddLine(prev, pt, col, 1.0f);
+            prev = pt;
+            have_prev = true;
+        }
+    }
+    dl->PopClipRect();
+
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.85f);
+    static const char* names[3] = {"x", "y", "z"};
+    double vals[3] = {latest.x, latest.y, latest.z};
+    float ly = c1.y - 4.0f - 14.0f * 3;
+    for (int axis = 0; axis < 3; ++axis) {
+        dl->AddCircleFilled(ImVec2(c0.x + 8, ly + 6), 3.5f, u32(acol[axis]));
+        char t[40];
+        std::snprintf(t, sizeof(t), "%s  % .*f", names[axis], scale >= 10 ? 2 : 3, vals[axis]);
+        dl->AddText(ImVec2(c0.x + 16, ly), u32(acol[axis]), t);
+        ly += 14.0f;
+    }
+    const char* tag = is_gyro ? "Gyro" : "Acc";
+    ImVec2 tts = ImGui::CalcTextSize(tag);
+    dl->AddText(ImVec2(c1.x - tts.x - 6, c1.y - tts.y - 4), u32(p.subtle_text), tag);
+    ImGui::PopFont();
+
+    ImGui::Dummy(ImVec2(w, height));
+}
+
+void audio_panel(float height) {
+    const theme::Palette& p = theme::palette();
+    auto hist = g_pb->audio_history();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + height), u32(p.deep), theme::RADIUS);
+    ImGui::PushFont(nullptr, theme::size::SMALL * 0.85f);
+    dl->AddText(ImVec2(pos.x + 6, pos.y + 3), u32(p.subtle_text), "Audio");
+    ImGui::PopFont();
+
+    const uint64_t now = g_pb->current_time_us();
+    const uint64_t window_us = 5'000'000;
+    const uint64_t win_start = now > window_us ? now - window_us : 0;
+    const float cy = pos.y + height * 0.5f + 5.0f;
+    const float amp_h = height * 0.5f - 12.0f;
+
+    // Bucket samples into ~2px columns and draw a peak bar per column so a
+    // dense recording reads as an envelope, not a solid block.
+    const int cols = std::max(1, (int)(w / 2.0f));
+    std::vector<float> peak(cols, 0.0f);
+    for (const auto& a : hist) {
+        if (a.t_us < win_start || a.t_us > now) continue;
+        int col = (int)((double)(a.t_us - win_start) / (double)window_us * cols);
+        col = std::clamp(col, 0, cols - 1);
+        peak[col] = std::max(peak[col], std::min(a.amp, 1.0f));
+    }
+    ImU32 wav = u32(with_alpha(p.subtle_text, 0.8f));
+    for (int i = 0; i < cols; ++i) {
+        if (peak[i] <= 0.0f) continue;
+        float x = pos.x + (i + 0.5f) * (w / cols);
+        float h = std::max(0.5f, peak[i] * amp_h);
+        dl->AddLine(ImVec2(x, cy - h), ImVec2(x, cy + h), wav, 1.0f);
+    }
+    dl->AddLine(ImVec2(pos.x, cy), ImVec2(pos.x + w, cy), u32(with_alpha(p.subtle_text, 0.35f)), 1.0f);
+    dl->AddLine(ImVec2(pos.x + w - 1, pos.y), ImVec2(pos.x + w - 1, pos.y + height),
+                u32(p.subtle_text), 1.0f);
+    ImGui::Dummy(ImVec2(w, height));
+}
+
+void sensors_body() {
+    const theme::Palette& p = theme::palette();
+    if (!has_file()) {
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::TextColored(p.subtle_text, "Open a recording.");
+        ImGui::PopFont();
+        return;
+    }
+    bool any = false;
+    for (const auto& t : g_pb->topics()) {
+        if (t.rfind("/imu/", 0) != 0) continue;
+        any = true;
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::TextColored(p.subtle_text, "%s", short_topic(t));
+        ImGui::PopFont();
+        imu_plot(t, 120.0f);
+        ImGui::Dummy(ImVec2(0, 8));
+    }
+    if (g_pb->has_audio()) {
+        audio_panel(72.0f);
+        any = true;
+    }
+    if (!any) {
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::TextColored(p.subtle_text, "No /imu/* or /audio topics.");
+        ImGui::PopFont();
+    }
+}
+
+void side_panel(ImVec2 pos, ImVec2 size) {
+    const theme::Palette& p = theme::palette();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, pos + size, u32(p.ui));
+    dl->AddLine(pos, ImVec2(pos.x, pos.y + size.y), u32(p.border), 1.0f);
+
+    // Header.
+    const float head_h = 34.0f;
+    dl->AddLine(ImVec2(pos.x, pos.y + head_h), ImVec2(pos.x + size.x, pos.y + head_h),
+                u32(p.border), 1.0f);
+    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+    dl->AddText(ImVec2(pos.x + 14, pos.y + (head_h - ImGui::GetTextLineHeight()) * 0.5f),
+                u32(p.light), "INSPECTOR");
+    ImGui::PopFont();
+
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + head_h));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
+    ImGui::BeginChild("##sidebody", ImVec2(size.x, size.y - head_h), ImGuiChildFlags_None);
+
+    if (bb::collapsing("Topics")) {
+        topic_list_body();
+        ImGui::Dummy(ImVec2(0, 4));
+    }
+    if (bb::collapsing("Inspector")) {
+        inspector_body();
+        ImGui::Dummy(ImVec2(0, 4));
+    }
+    if (bb::collapsing("Sensors")) {
+        sensors_body();
+        ImGui::Dummy(ImVec2(0, 4));
+    }
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
 }
 
 } // namespace
@@ -126,328 +686,53 @@ void open_path(const char* utf8_path) {
 bool has_file() { return g_pb && g_pb->is_open(); }
 mp::Playback& playback() { return *g_pb; }
 
-void topic_tree() {
+// A vertical drag handle on the right panel's left edge. Submitted last (its
+// own child window) so it wins input over the video/panel children beneath.
+void panel_splitter(ImVec2 panel_pos, float panel_h) {
     const theme::Palette& p = theme::palette();
-    bb::field_label("TOPICS");
-    ImGui::Dummy(ImVec2(0, 4));
-
-    if (!has_file()) {
-        ImGui::PushFont(nullptr, theme::size::SMALL);
-        ImGui::TextColored(p.subtle_text, "No file open.");
-        ImGui::Dummy(ImVec2(0, 6));
-        if (bb::button("Open MCAP\xe2\x80\xa6")) open_dialog();
-        ImGui::PopFont();
-        return;
+    const float grab = 10.0f;
+    ImGui::SetCursorScreenPos(ImVec2(panel_pos.x - grab * 0.5f, panel_pos.y));
+    ImGui::BeginChild("##panelsplit", ImVec2(grab, panel_h), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::InvisibleButton("h", ImVec2(grab, panel_h));
+    bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+    if (hov || act) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (act) {
+        // Dragging the handle left (mouse dx < 0) widens the right panel.
+        g_panel_w = std::clamp(g_panel_w - ImGui::GetIO().MouseDelta.x, PANEL_W_MIN, PANEL_W_MAX);
     }
-
-    for (const auto& t : g_pb->topics()) {
-        char cnt[24];
-        std::snprintf(cnt, sizeof(cnt), "%llu", (unsigned long long)g_pb->message_count(t));
-        bool sel = (t == g_selected_topic);
-        if (bb::outliner_node(t.c_str(), /*leaf=*/true, sel, nullptr, t.c_str()))
-            g_selected_topic = t;
-        // outliner_node returns true only for non-leaf toggles; catch the
-        // click on a leaf row via the last item.
-        if (ImGui::IsItemClicked()) g_selected_topic = t;
-        ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
-        ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
-        ImVec2 ts = ImGui::CalcTextSize(cnt);
-        ImGui::GetWindowDrawList()->AddText(
-            ImVec2(rmax.x - ts.x - 24.0f, rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f),
-            u32(p.subtle_text), cnt);
-        ImGui::PopFont();
-    }
-}
-
-void inspector() {
-    const theme::Palette& p = theme::palette();
-    bb::field_label("INSPECTOR");
-    ImGui::Dummy(ImVec2(0, 4));
-    if (!has_file()) {
-        ImGui::PushFont(nullptr, theme::size::SMALL);
-        ImGui::TextColored(p.subtle_text, "Open a recording, then pick a topic.");
-        ImGui::PopFont();
-        return;
-    }
-    if (g_selected_topic.empty()) {
-        ImGui::PushFont(nullptr, theme::size::SMALL);
-        ImGui::TextColored(p.subtle_text, "Select a topic on the left.");
-        ImGui::PopFont();
-        return;
-    }
-    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
-    ImGui::TextUnformatted(g_selected_topic.c_str());
-    ImGui::PopFont();
-    ImGui::Dummy(ImVec2(0, 4));
-    ImGui::PushFont(nullptr, theme::size::SMALL);
-    std::string summary = g_pb->latest_summary(g_selected_topic);
-    ImGui::TextColored(p.text, "%s", summary.empty() ? "(no message yet)" : summary.c_str());
-    ImGui::Dummy(ImVec2(0, 4));
-    char cnt[48];
-    std::snprintf(cnt, sizeof(cnt), "%llu messages dispatched",
-                  (unsigned long long)g_pb->message_count(g_selected_topic));
-    ImGui::TextColored(p.subtle_text, "%s", cnt);
-    ImGui::PopFont();
-}
-
-// An x/y/z chart for one IMU topic, modelled on EgoViewer's
-// SensorPanel::drawAxisLegendChart: a 5s window, RAW values (no detrend)
-// against an adaptive-max symmetric Y scale, a faint grid with numeric Y
-// labels, a bottom-left colour/letter/value legend, and an "Acc"/"Gyro"
-// tag bottom-right.
-void imu_plot(const std::string& topic, float height) {
-    const theme::Palette& p = theme::palette();
-    auto hist = g_pb->imu_history(topic);
-    auto latest = g_pb->imu_latest(topic);
-    ImVec2 pos = ImGui::GetCursorScreenPos();
-    float w = ImGui::GetContentRegionAvail().x;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-
-    const uint64_t now = g_pb->current_time_us();
-    const uint64_t window_us = 5'000'000;
-    const uint64_t win_start = now > window_us ? now - window_us : 0;
-
-    const bool is_gyro = topic.find("gyro") != std::string::npos;
-    float& scale = g_imu_scale[topic];
-    if (scale <= 0.0f) scale = is_gyro ? 1.0f : 15.0f;
-    for (const auto& s : hist) {
-        if (s.t_us < win_start || s.t_us > now) continue;
-        scale = std::max({scale, (float)std::abs(s.x), (float)std::abs(s.y),
-                          (float)std::abs(s.z)});
-    }
-
-    // Chart rect — a left margin for the Y labels, small padding elsewhere.
-    const float y_label_w = 30.0f;
-    ImVec2 c0(pos.x + y_label_w, pos.y + 4.0f);
-    ImVec2 c1(pos.x + w, pos.y + height - 4.0f);
-    dl->AddRectFilled(c0, c1, u32(p.deep));
-
-    const ImU32 grid = IM_COL32(255, 255, 255, 22);
-    for (int i = 0; i <= 5; ++i) {
-        float gx = c0.x + (c1.x - c0.x) * i / 5.0f;
-        dl->AddLine(ImVec2(gx, c0.y), ImVec2(gx, c1.y), grid, 1.0f);
-    }
-    ImGui::PushFont(nullptr, theme::size::SMALL * 0.8f);
-    int dec = scale >= 10 ? 0 : (scale >= 1 ? 1 : 2);
-    for (int i = 0; i <= 4; ++i) {
-        float frac = 1.0f - i / 2.0f; // +1, +0.5, 0, -0.5, -1
-        float gy = c0.y + (c1.y - c0.y) * i / 4.0f;
-        dl->AddLine(ImVec2(c0.x, gy), ImVec2(c1.x, gy), grid, 1.0f);
-        char lbl[16];
-        std::snprintf(lbl, sizeof(lbl), "%.*f", dec, frac * scale);
-        ImVec2 ts = ImGui::CalcTextSize(lbl);
-        dl->AddText(ImVec2(pos.x + y_label_w - 4 - ts.x, gy - ts.y * 0.5f), u32(p.subtle_text),
-                    lbl);
-    }
-    ImGui::PopFont();
-
-    auto X = [&](uint64_t t) {
-        return c1.x - (float)((double)(now - t) / (double)window_us) * (c1.x - c0.x);
-    };
-    float mid = (c0.y + c1.y) * 0.5f;
-    auto Y = [&](double v) {
-        double norm = std::clamp(v / scale, -1.0, 1.0);
-        return mid - (float)norm * (c1.y - c0.y) * 0.48f;
-    };
-
-    const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
-    dl->PushClipRect(c0, c1, true);
-    for (int axis = 0; axis < 3; ++axis) {
-        ImU32 col = u32(ImVec4(acol[axis].x, acol[axis].y, acol[axis].z, 0.9f));
-        bool have_prev = false;
-        ImVec2 prev;
-        for (const auto& s : hist) {
-            if (s.t_us < win_start || s.t_us > now) { have_prev = false; continue; }
-            double raw = axis == 0 ? s.x : axis == 1 ? s.y : s.z;
-            ImVec2 pt(X(s.t_us), Y(raw));
-            if (have_prev) dl->AddLine(prev, pt, col, 1.0f);
-            prev = pt;
-            have_prev = true;
-        }
-    }
-    dl->PopClipRect();
-
-    // Bottom-left legend: swatch + letter + current value, per axis.
-    ImGui::PushFont(nullptr, theme::size::SMALL * 0.85f);
-    static const char* names[3] = {"x", "y", "z"};
-    double vals[3] = {latest.x, latest.y, latest.z};
-    float ly = c1.y - 4.0f - 14.0f * 3;
-    for (int axis = 0; axis < 3; ++axis) {
-        dl->AddCircleFilled(ImVec2(c0.x + 8, ly + 6), 3.5f, u32(acol[axis]));
-        char t[40];
-        std::snprintf(t, sizeof(t), "%s  % .*f", names[axis], scale >= 10 ? 2 : 3, vals[axis]);
-        dl->AddText(ImVec2(c0.x + 16, ly), u32(acol[axis]), t);
-        ly += 14.0f;
-    }
-    // Section tag bottom-right.
-    const char* tag = is_gyro ? "Gyro" : "Acc";
-    ImVec2 tts = ImGui::CalcTextSize(tag);
-    dl->AddText(ImVec2(c1.x - tts.x - 6, c1.y - tts.y - 4), u32(p.subtle_text), tag);
-    ImGui::PopFont();
-
-    ImGui::Dummy(ImVec2(w, height));
-}
-
-void audio_panel(float height) {
-    const theme::Palette& p = theme::palette();
-    auto hist = g_pb->audio_history();
-    ImVec2 pos = ImGui::GetCursorScreenPos();
-    float w = ImGui::GetContentRegionAvail().x;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + height), u32(p.deep), theme::RADIUS);
-    dl->AddRect(pos, ImVec2(pos.x + w, pos.y + height), u32(p.border), theme::RADIUS);
-    ImGui::PushFont(nullptr, theme::size::SMALL * 0.9f);
-    dl->AddText(ImVec2(pos.x + 6, pos.y + 4), u32(p.subtle_text), "audio");
-    ImGui::PopFont();
-
-    const uint64_t now = g_pb->current_time_us();
-    const uint64_t window_us = 5'000'000;
-    const uint64_t win_start = now > window_us ? now - window_us : 0;
-    float cy = pos.y + height * 0.5f + 6.0f;
-    for (const auto& a : hist) {
-        if (a.t_us < win_start || a.t_us > now) continue;
-        float x = pos.x + w * (float)((double)(a.t_us - win_start) / (double)window_us);
-        float h = a.amp * (height * 0.5f - 12.0f);
-        dl->AddLine(ImVec2(x, cy - h), ImVec2(x, cy + h), u32(p.accent), 1.0f);
-    }
-    dl->AddLine(ImVec2(pos.x + w - 1, pos.y), ImVec2(pos.x + w - 1, pos.y + height),
-                u32(p.subtle_text), 1.0f);
-    ImGui::Dummy(ImVec2(w, height));
-}
-
-void imu_plots() {
-    if (!has_file()) return;
-    for (const auto& t : g_pb->topics()) {
-        if (t.rfind("/imu/", 0) != 0) continue;
-        imu_plot(t, 124.0f);
-        ImGui::Dummy(ImVec2(0, 6));
-    }
-    if (g_pb->has_audio()) {
-        audio_panel(80.0f);
-        ImGui::Dummy(ImVec2(0, 6));
-    }
-}
-
-void video_grid() {
-    if (!has_file()) {
-        const theme::Palette& p = theme::palette();
-        ImGui::PushFont(fonts::medium(), theme::size::HEADING);
-        ImGui::TextColored(p.subtle_text, "MCAP Player");
-        ImGui::PopFont();
-        ImGui::PushFont(nullptr, theme::size::SMALL);
-        ImGui::TextColored(p.subtle_text,
-                           "File \xe2\x80\xba Open Model\xe2\x80\xa6 (or the topic panel button) "
-                           "to open a .mcap recording.");
-        ImGui::PopFont();
-        return;
-    }
-
-    const auto& vts = g_pb->video_topics();
-    if (vts.empty()) {
-        ImGui::TextDisabled("This recording has no /camera/* video topics.");
-        return;
-    }
-
-    // Simple responsive grid: 1 col for 1 stream, else 2 cols.
-    int cols = vts.size() == 1 ? 1 : 2;
-    float avail = ImGui::GetContentRegionAvail().x;
-    float spacing = 6.0f;
-    float cell_w = (avail - spacing * (cols - 1)) / cols;
-
-    bool rot90 = (((g_rotation % 360) + 360) % 360) % 180 != 0;
-
-    for (size_t i = 0; i < vts.size(); ++i) {
-        const std::string& topic = vts[i];
-        if (i % cols != 0) ImGui::SameLine(0, spacing);
-
-        auto& tex = g_textures[topic];
-        if (!tex) tex = std::make_unique<mp::VideoTexture>(g_device, g_queue);
-        if (auto frame = g_pb->latest_frame(topic)) tex->update(frame);
-
-        // Aspect ratio follows the *displayed* orientation.
-        float disp_w = rot90 ? (float)tex->height() : (float)tex->width();
-        float disp_h = rot90 ? (float)tex->width() : (float)tex->height();
-        float cell_h = tex->valid() && disp_w > 0 ? cell_w * disp_h / disp_w
-                                                  : cell_w * 9.0f / 16.0f;
-
-        ImGui::BeginChild((topic + "##vid").c_str(), ImVec2(cell_w, cell_h + 22.0f),
-                          ImGuiChildFlags_Borders);
-        ImGui::PushFont(nullptr, theme::size::SMALL);
-        ImGui::TextUnformatted(short_topic(topic));
-        ImGui::PopFont();
-        if (tex->valid())
-            draw_video(ImVec2(cell_w - 4.0f, cell_h), tex->id(), g_rotation);
-        else
-            ImGui::Dummy(ImVec2(cell_w - 4.0f, cell_h));
-        ImGui::EndChild();
-    }
-}
-
-void timeline() {
-    const theme::Palette& p = theme::palette();
-    if (!has_file()) return;
-
-    mp::Playback& pb = *g_pb;
-    uint64_t start = pb.start_time_us(), end = pb.end_time_us();
-    uint64_t cur = pb.current_time_us();
-    uint64_t span = end > start ? end - start : 1;
-
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, p.back);
-    ImGui::BeginChild("##timeline", ImVec2(0, 40), ImGuiChildFlags_None);
-    ImGui::SetCursorPos(ImVec2(8, 8));
-
-    if (bb::icon_button(pb.playing() ? ICON_PAUSE : ICON_PLAY)) pb.toggle();
-    ImGui::SameLine(0, 8);
-
-    char t_cur[32], t_end[32];
-    fmt_time(t_cur, sizeof(t_cur), cur - start);
-    fmt_time(t_end, sizeof(t_end), end - start);
-
-    ImGui::AlignTextToFramePadding();
-    ImGui::PushFont(nullptr, theme::size::SMALL);
-    ImGui::TextColored(p.text, "%s", t_cur);
-    ImGui::PopFont();
-    ImGui::SameLine(0, 10);
-
-    float bar_w = ImGui::GetContentRegionAvail().x - 90.0f;
-    ImVec2 bp = ImGui::GetCursorScreenPos();
-    bp.y += 6.0f;
-    float bar_h = 6.0f;
-    ImGui::InvisibleButton("##scrub", ImVec2(bar_w, 20.0f));
-    bool hovered = ImGui::IsItemHovered();
-    if (ImGui::IsItemActive()) {
-        float rel = (ImGui::GetIO().MousePos.x - bp.x) / bar_w;
-        rel = rel < 0 ? 0 : (rel > 1 ? 1 : rel);
-        pb.seek(start + (uint64_t)(rel * span));
-    }
-
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(bp, ImVec2(bp.x + bar_w, bp.y + bar_h), u32(p.deep), 3.0f);
-    float frac = span ? (float)(cur - start) / (float)span : 0.0f;
-    dl->AddRectFilled(bp, ImVec2(bp.x + bar_w * frac, bp.y + bar_h), u32(p.accent), 3.0f);
-    dl->AddCircleFilled(ImVec2(bp.x + bar_w * frac, bp.y + bar_h * 0.5f),
-                        hovered ? 6.0f : 4.5f, u32(p.light));
-
-    ImGui::SameLine(0, 10);
-    ImGui::PushFont(nullptr, theme::size::SMALL);
-    ImGui::TextColored(p.subtle_text, "%s", t_end);
-    ImGui::PopFont();
-
-    ImGui::SameLine(0, 12);
-    if (bb::icon_button(ICON_ROTATE)) g_rotation = (g_rotation + 90) % 360;
-
-    ImGui::SameLine(0, 4);
-    static const float SPEEDS[] = {0.5f, 1.0f, 2.0f, 4.0f};
-    char sp[8];
-    std::snprintf(sp, sizeof(sp), "%gx", pb.speed());
-    if (bb::button(sp)) {
-        int i = 0;
-        for (; i < 4; ++i) if (SPEEDS[i] == pb.speed()) break;
-        pb.set_speed(SPEEDS[(i + 1) % 4]);
-    }
-
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(panel_pos.x, panel_pos.y),
+                                       ImVec2(panel_pos.x, panel_pos.y + panel_h),
+                                       u32(hov || act ? p.accent : p.border),
+                                       hov || act ? 2.0f : 1.0f);
     ImGui::EndChild();
-    ImGui::PopStyleColor();
+}
+
+void layout(ImVec2 o, ImVec2 sz) {
+    if (sz.x <= 0 || sz.y <= 0) return;
+
+    float body_w = sz.x - RAIL_W;
+    float panel_w = std::clamp(g_panel_w, PANEL_W_MIN,
+                               std::max(PANEL_W_MIN, body_w - 200.0f));
+    float region_h = sz.y - TRANSPORT_H;
+
+    ImVec2 rail_pos = o;
+    ImVec2 rail_sz(RAIL_W, sz.y);
+
+    ImVec2 transport_pos(o.x + RAIL_W, o.y + region_h);
+    ImVec2 transport_sz(body_w, TRANSPORT_H);
+
+    ImVec2 panel_pos(o.x + sz.x - panel_w, o.y);
+    ImVec2 panel_sz(panel_w, region_h);
+
+    ImVec2 disp_pos(o.x + RAIL_W, o.y);
+    ImVec2 disp_sz(std::max(120.0f, body_w - panel_w), region_h);
+
+    display(disp_pos, disp_sz);
+    side_panel(panel_pos, panel_sz);
+    transport(transport_pos, transport_sz);
+    rail(rail_pos, rail_sz);
+    panel_splitter(panel_pos, panel_sz.y);
 }
 
 } // namespace mcap_ui

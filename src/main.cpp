@@ -430,6 +430,9 @@ int main(int argc, char** argv) {
 
         theme::poll_hot_reload();
         shell::set_menus(build_menus(), 6);
+        // The MCAP player runs in Minimal chrome (slim title bar only); the
+        // dev-only component gallery still wants Blockbench's Full chrome.
+        shell::set_chrome(gallery_open ? shell::Chrome::Full : shell::Chrome::Minimal);
         shell::begin(window);
 
         if (const char* a = shell::menu_clicked()) {
@@ -445,42 +448,29 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Toolbar row: panel name (left) + a few representative Blockbench
-        // tool icons + the Edit/Paint/Animate mode selector (right-aligned,
-        // drawn inside toolbar_begin()). The icons here are a representative
-        // set, not a 1:1 port of Blockbench's per-mode tool list.
-        shell::toolbar_begin(shell::mode() == shell::Mode::Edit ? "UV"
-                             : shell::mode() == shell::Mode::Paint ? "Paint"
-                                                                   : "Animate");
-        static int active_tool = 0;
-        const char* tools[] = {ICON_MOVE, ICON_ROTATE, ICON_RESIZE, ICON_PIVOT, ICON_BRUSH};
-        for (int i = 0; i < 5; i++)
-            if (shell::tool_button(tools[i], active_tool == i)) active_tool = i;
-        shell::toolbar_end();
+        if (gallery_open) {
+            // Toolbar row: panel name + a few representative Blockbench tool
+            // icons + the Edit/Paint/Animate mode selector (right-aligned).
+            shell::toolbar_begin(shell::mode() == shell::Mode::Edit ? "UV"
+                                 : shell::mode() == shell::Mode::Paint ? "Paint"
+                                                                       : "Animate");
+            static int active_tool = 0;
+            const char* tools[] = {ICON_MOVE, ICON_ROTATE, ICON_RESIZE, ICON_PIVOT, ICON_BRUSH};
+            for (int i = 0; i < 5; i++)
+                if (shell::tool_button(tools[i], active_tool == i)) active_tool = i;
+            shell::toolbar_end();
 
-        if (bb::begin_panel("Left", false)) {
-            if (gallery_open) gallery::list();
-            else mcap_ui::topic_tree();
+            if (bb::begin_panel("Left", false)) gallery::list();
+            bb::end_panel();
+            if (bb::begin_panel("Workspace", false)) gallery::detail();
+            bb::end_panel();
+            if (bb::begin_panel("Right", false)) {}
+            bb::end_panel();
+        } else {
+            ImVec2 area_pos, area_size;
+            shell::content_rect(&area_pos, &area_size);
+            mcap_ui::layout(area_pos, area_size);
         }
-        bb::end_panel();
-
-        if (bb::begin_panel("Workspace", false)) {
-            if (gallery_open) {
-                gallery::detail();
-            } else {
-                mcap_ui::timeline();
-                ImGui::Dummy(ImVec2(0, 6));
-                mcap_ui::video_grid();
-                ImGui::Dummy(ImVec2(0, 8));
-                mcap_ui::imu_plots();
-            }
-        }
-        bb::end_panel();
-
-        if (bb::begin_panel("Right", false)) {
-            if (!gallery_open) mcap_ui::inspector();
-        }
-        bb::end_panel();
 
         shell::end();
 

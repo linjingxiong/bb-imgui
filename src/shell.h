@@ -18,6 +18,19 @@ inline constexpr float TAB_BAR_H = 34.0f;  // Blockbench #tab_bar height
 inline constexpr float TOOLBAR_H = 30.0f;  // Blockbench .tool height
 inline constexpr float STATUS_H = 26.0f;
 
+// Window chrome style. `Full` is Blockbench's (title bar + project tabs +
+// toolbar row + status bar, all feeding a docking host). `Minimal` keeps
+// only the slim title bar (menu + window controls) and hands the whole
+// area below it to the caller via content_rect() — no tab bar, no toolbar,
+// no status bar, no dockspace. The MCAP player uses Minimal.
+enum class Chrome { Full, Minimal };
+void set_chrome(Chrome c);
+Chrome chrome();
+
+// The screen-space rectangle below the chrome (Minimal: everything under
+// the title bar; Full: the dockspace rect). Valid after begin().
+void content_rect(ImVec2* pos, ImVec2* size);
+
 // Title-bar menu points (File / Edit / …). Pointer must stay valid.
 void set_menus(const menu::Menu* menus, int count);
 
