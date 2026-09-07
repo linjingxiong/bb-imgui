@@ -445,13 +445,12 @@ void transport(ImVec2 pos, ImVec2 size) {
         float rel = std::clamp((ImGui::GetIO().MousePos.x - pos.x) / size.x, 0.0f, 1.0f);
         g_pb->seek(s + (uint64_t)(rel * span));
     }
-    const float hh = shov ? 3.0f : 2.0f;
+    const float hh = shov ? 4.0f : 3.0f;
     float px = std::floor(pos.x + size.x * frac);
     dl->AddRectFilled(ImVec2(pos.x, trk_cy - hh), ImVec2(pos.x + size.x, trk_cy + hh),
-                      u32(mix(p.ui, p.text, 0.20f)));
+                      u32(mix(p.ui, p.deep, 0.5f)));
     if (ready && px > pos.x)
-        dl->AddRectFilled(ImVec2(pos.x, trk_cy - hh), ImVec2(px, trk_cy + hh),
-                          u32(mix(p.ui, p.text, 0.42f)));
+        dl->AddRectFilled(ImVec2(pos.x, trk_cy - hh), ImVec2(px, trk_cy + hh), u32(p.accent));
     if (ready) {
         // Playhead — a small vertical bar riding the track.
         float bw = 3.0f, bhh = shov ? 8.0f : 7.0f;
@@ -463,8 +462,8 @@ void transport(ImVec2 pos, ImVec2 size) {
     const float row_y = pos.y + 34.0f;
 
     auto ico_btn = [&](const char* id, const char* icon, const char* tip, float glyph, bool lit,
-                       ImVec2 c) -> bool {
-        ImVec2 bs(26, 26);
+                       ImVec2 c, float box = 26.0f) -> bool {
+        ImVec2 bs(box, box);
         ImVec2 bp = snap(ImVec2(c.x - bs.x * 0.5f, c.y - bs.y * 0.5f));
         ImGui::PushID(id);
         ImGui::SetCursorScreenPos(bp);
@@ -509,16 +508,16 @@ void transport(ImVec2 pos, ImVec2 size) {
     dl->AddText(snap(ImVec2(pos.x + 38.0f, row_y - th * 0.5f)), u32(p.text), stamp);
     ImGui::PopFont();
 
-    // Centre: skip-start / play / skip-end.
+    // Centre: skip-start / play / skip-end — the largest controls in the bar.
     float mid = pos.x + size.x * 0.5f;
-    if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 21.0f, false,
-                ImVec2(mid - 34.0f, row_y)) && ready)
+    if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 26.0f, false,
+                ImVec2(mid - 42.0f, row_y), 32.0f) && ready)
         g_pb->seek(s);
-    if (ico_btn("play", playing ? ICON_PAUSE : ICON_PLAY, playing ? "Pause" : "Play", 25.0f, false,
-                ImVec2(mid, row_y)) && ready)
+    if (ico_btn("play", playing ? ICON_PAUSE : ICON_PLAY, playing ? "Pause" : "Play", 30.0f, false,
+                ImVec2(mid, row_y), 34.0f) && ready)
         g_pb->toggle();
-    if (ico_btn("last", ICON_SKIP_NEXT, "Jump to end", 21.0f, false,
-                ImVec2(mid + 34.0f, row_y)) && ready)
+    if (ico_btn("last", ICON_SKIP_NEXT, "Jump to end", 26.0f, false,
+                ImVec2(mid + 42.0f, row_y), 32.0f) && ready)
         g_pb->seek(s + span);
 
     // Right: loop toggle + speed menu.
