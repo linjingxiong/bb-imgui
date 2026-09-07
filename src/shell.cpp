@@ -81,22 +81,22 @@ bool window_button(const char* id, int kind, GLFWwindow* win) {
     const float r = 5.5f; // half-extent of an ~11px glyph (BB's is 16px viewBox)
     switch (kind) {
         case 0: // minimize — a thin horizontal bar
-            dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), fg, 1.0f);
+            dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), fg, 1.3f);
             break;
         case 1: // maximize — hollow square
-            dl->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fg, 0.0f, 0, 1.0f);
+            dl->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fg, 0.0f, 0, 1.3f);
             break;
         case 2: { // restore — two offset squares
             float d = 2.5f;
-            dl->AddRect(ImVec2(c.x - r + d, c.y - r), ImVec2(c.x + r, c.y + r - d), fg, 0, 0, 1.0f);
+            dl->AddRect(ImVec2(c.x - r + d, c.y - r), ImVec2(c.x + r, c.y + r - d), fg, 0, 0, 1.3f);
             dl->AddRectFilled(ImVec2(c.x - r, c.y - r + d), ImVec2(c.x + r - d, c.y + r),
                               hovered ? u32(p.selected) : u32(p.frame));
-            dl->AddRect(ImVec2(c.x - r, c.y - r + d), ImVec2(c.x + r - d, c.y + r), fg, 0, 0, 1.0f);
+            dl->AddRect(ImVec2(c.x - r, c.y - r + d), ImVec2(c.x + r - d, c.y + r), fg, 0, 0, 1.3f);
             break;
         }
         case 3: // close — a thin X
-            dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fg, 1.1f);
-            dl->AddLine(ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y - r), fg, 1.1f);
+            dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), fg, 1.4f);
+            dl->AddLine(ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y - r), fg, 1.4f);
             break;
     }
     (void)win;

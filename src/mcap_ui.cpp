@@ -239,8 +239,9 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         ImGui::PopID();
         if (hov || active)
             dl->AddRectFilled(bp, bp + bs, u32(p.selected), 3.0f);
-        ImVec4 c = (hov || active) ? p.light : ImVec4(p.subtle_text.x, p.subtle_text.y,
-                                                      p.subtle_text.z, 0.7f);
+        // Blockbench .panel_control: --color-text at opacity 0.7 -> 1 on hover.
+        ImVec4 c = (hov || active) ? p.light
+                                   : ImVec4(p.text.x, p.text.y, p.text.z, 0.8f);
         icon_centered(dl, icon, bp, bp + bs, ICON, u32(c));
         rx = bp.x;
         return clk;
