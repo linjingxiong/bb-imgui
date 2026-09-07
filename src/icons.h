@@ -88,3 +88,5 @@
 #define ICON_ASPECT_RATIO       u8"\ue85b"
 #define ICON_TIMELINE           u8"\ue922"
 #define ICON_FULLSCREEN_EXIT    u8"\ue5d1"
+#define ICON_OPEN_IN_FULL       u8"\uf1ce"
+#define ICON_CLOSE_FULLSCREEN   u8"\uf1cf"

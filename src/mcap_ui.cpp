@@ -62,7 +62,6 @@ float g_panel_w = 324.0f;
 
 // Icon sizes (Blockbench: .material-icons 22px, .tool 36x30).
 constexpr float RAIL_ICON_PX = 20.0f;
-constexpr float BTN_ICON_PX = 19.0f;
 
 // Per-axis plot colours — Blockbench's viewport axis colours (css/setup.css
 // --color-axis-{x,y,z}), same triplet EgoViewer's SensorPanel uses.
@@ -71,6 +70,22 @@ const ImVec4 kAxisG = theme::axis::Y;
 const ImVec4 kAxisB = theme::axis::Z;
 
 ImU32 u32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
+
+// Draw an icon glyph optically centred in [box_min, box_max] at pixel `px`.
+// Material Symbols render ~10% high against their text metrics, so nudge
+// down; snap the result to a whole pixel to keep the edges crisp.
+void icon_centered(ImDrawList* dl, const char* glyph, ImVec2 box_min, ImVec2 box_max, float px,
+                   ImU32 col) {
+    ImGui::PushFont(fonts::body(), px);
+    ImVec2 ts = ImGui::CalcTextSize(glyph);
+    float cx = (box_min.x + box_max.x) * 0.5f;
+    float cy = (box_min.y + box_max.y) * 0.5f;
+    dl->AddText(ImVec2(std::floor(cx - ts.x * 0.5f + 0.5f),
+                       std::floor(cy - px * 0.5f + px * 0.10f + 0.5f)),
+                col, glyph);
+    ImGui::PopFont();
+}
+
 ImVec4 mix(const ImVec4& a, const ImVec4& b, float t) {
     return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t,
                   a.w + (b.w - a.w) * t);
@@ -146,11 +161,7 @@ void rail(ImVec2 pos, ImVec2 size) {
             dl->AddRectFilled(bp, bp + bs, u32(p.selected));
         if (active)
             dl->AddRectFilled(bp, ImVec2(bp.x + 2.0f, bp.y + bs.y), u32(p.accent));
-        ImGui::PushFont(fonts::body(), RAIL_ICON_PX);
-        ImVec2 ts = ImGui::CalcTextSize(icon);
-        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
-                    u32(hov || active ? p.light : p.text), icon);
-        ImGui::PopFont();
+        icon_centered(dl, icon, bp, bp + bs, RAIL_ICON_PX, u32(hov || active ? p.light : p.text));
         if (hov && tip) ImGui::SetTooltip("%s", tip);
         return clk;
     };
@@ -189,6 +200,11 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     const theme::Palette& p = theme::palette();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float HEAD = 32.0f; // Blockbench #center h3.panel_handle
+    pos.x = std::floor(pos.x);
+    pos.y = std::floor(pos.y);
+    size.x = std::floor(size.x);
+    size.y = std::floor(size.y);
+    auto snap = [](ImVec2 v) { return ImVec2(std::floor(v.x + 0.5f), std::floor(v.y + 0.5f)); };
 
     dl->AddRectFilled(pos, pos + size, u32(p.ui));
     dl->AddLine(ImVec2(pos.x, pos.y + HEAD), ImVec2(pos.x + size.x, pos.y + HEAD), u32(p.border),
@@ -201,17 +217,18 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
 
     // Title — uppercase, muted (Blockbench panel_handle > label, 1.1em).
     ImGui::PushFont(fonts::medium(), theme::size::SMALL);
-    dl->AddText(ImVec2(pos.x + 10, pos.y + (HEAD - ImGui::GetTextLineHeight()) * 0.5f),
+    dl->AddText(snap(ImVec2(pos.x + 10, pos.y + (HEAD - ImGui::GetTextLineHeight()) * 0.5f + 1.0f)),
                 u32(p.subtle_text), upper(topic).c_str());
     ImGui::PopFont();
 
     // Controls — always shown (Blockbench .panel_control opacity 0.7), full
     // on hover / active.
     ImGui::PushID((topic + "vp").c_str());
-    float rx = pos.x + size.x - 5.0f;
+    const float ICON = 18.0f;
+    float rx = pos.x + size.x - 4.0f;
     auto hdr_btn = [&](const char* tag, const char* icon, bool active) -> bool {
         ImVec2 bs(24.0f, 24.0f);
-        ImVec2 bp(rx - bs.x, pos.y + (HEAD - bs.y) * 0.5f);
+        ImVec2 bp = snap(ImVec2(rx - bs.x, pos.y + (HEAD - bs.y) * 0.5f));
         ImGui::PushID(tag);
         ImGui::SetCursorScreenPos(bp);
         ImGui::InvisibleButton("b", bs);
@@ -220,19 +237,16 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         ImGui::PopID();
         if (hov || active)
             dl->AddRectFilled(bp, bp + bs, u32(p.selected), 3.0f);
-        ImGui::PushFont(fonts::body(), BTN_ICON_PX);
-        ImVec2 ts = ImGui::CalcTextSize(icon);
         ImVec4 c = (hov || active) ? p.light : ImVec4(p.subtle_text.x, p.subtle_text.y,
                                                       p.subtle_text.z, 0.7f);
-        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f), u32(c), icon);
-        ImGui::PopFont();
-        rx = bp.x - 1.0f;
+        icon_centered(dl, icon, bp, bp + bs, ICON, u32(c));
+        rx = bp.x;
         return clk;
     };
 
     if (hdr_btn("more", ICON_MORE_VERT, false)) ImGui::OpenPopup("vset");
     if (hdr_btn("set", ICON_SETTINGS, ImGui::IsPopupOpen("vset"))) ImGui::OpenPopup("vset");
-    if (hdr_btn("exp", focused ? ICON_FULLSCREEN_EXIT : ICON_FULLSCREEN, focused))
+    if (hdr_btn("exp", focused ? ICON_CLOSE_FULLSCREEN : ICON_OPEN_IN_FULL, focused))
         g_focus_topic = focused ? std::string() : topic;
 
     ImGui::SetNextWindowPos(ImVec2(pos.x + size.x - 6.0f, pos.y + HEAD + 4.0f), ImGuiCond_Always,
@@ -269,8 +283,8 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         float th = rot90 ? (float)tex->width() : (float)tex->height();
         float sc = v.fit == 0 ? std::min(csz.x / tw, csz.y / th)
                               : std::max(csz.x / tw, csz.y / th);
-        float dw = tw * sc, dh = th * sc;
-        ImVec2 ip(c0.x + (csz.x - dw) * 0.5f, c0.y + (csz.y - dh) * 0.5f);
+        float dw = std::floor(tw * sc), dh = std::floor(th * sc);
+        ImVec2 ip = snap(ImVec2(c0.x + (csz.x - dw) * 0.5f, c0.y + (csz.y - dh) * 0.5f));
         ImGui::SetCursorScreenPos(ip);
         draw_video(ImVec2(dw, dh), tex->id(), v.rot);
     }
@@ -318,21 +332,27 @@ void display(ImVec2 pos, ImVec2 size) {
     }
 
     // Blockbench tiles panels flush; the only seams are 1px --color-border.
+    // Snap every panel edge to a whole pixel so text/icons inside stay crisp.
     int n = (int)vts.size();
     int cols = n == 1 ? 1 : 2;
     int rows = (n + cols - 1) / cols;
-    float cw = size.x / cols;
-    float ch = size.y / rows;
+    float ox = std::floor(pos.x), oy = std::floor(pos.y);
     for (int i = 0; i < n; ++i) {
         int gx = i % cols, gy = i / cols;
-        video_panel(vts[i], ImVec2(pos.x + gx * cw, pos.y + gy * ch), ImVec2(cw, ch));
+        float x0 = std::floor(ox + size.x * gx / cols);
+        float x1 = std::floor(ox + size.x * (gx + 1) / cols);
+        float y0 = std::floor(oy + size.y * gy / rows);
+        float y1 = std::floor(oy + size.y * (gy + 1) / rows);
+        video_panel(vts[i], ImVec2(x0, y0), ImVec2(x1 - x0, y1 - y0));
     }
-    for (int c = 1; c < cols; ++c)
-        dl->AddLine(ImVec2(pos.x + c * cw, pos.y), ImVec2(pos.x + c * cw, pos.y + size.y),
-                    u32(p.border), 1.0f);
-    for (int r = 1; r < rows; ++r)
-        dl->AddLine(ImVec2(pos.x, pos.y + r * ch), ImVec2(pos.x + size.x, pos.y + r * ch),
-                    u32(p.border), 1.0f);
+    for (int c = 1; c < cols; ++c) {
+        float x = std::floor(ox + size.x * c / cols);
+        dl->AddLine(ImVec2(x, oy), ImVec2(x, oy + size.y), u32(p.border), 1.0f);
+    }
+    for (int r = 1; r < rows; ++r) {
+        float y = std::floor(oy + size.y * r / rows);
+        dl->AddLine(ImVec2(ox, y), ImVec2(ox + size.x, y), u32(p.border), 1.0f);
+    }
 
     ImGui::EndChild();
 }
@@ -400,11 +420,7 @@ void transport(ImVec2 pos, ImVec2 size) {
         ImGui::InvisibleButton("##rot", bs);
         bool hov = ImGui::IsItemHovered();
         if (ImGui::IsItemClicked()) rotate_all();
-        ImGui::PushFont(fonts::body(), 17.0f);
-        ImVec2 ts = ImGui::CalcTextSize(ICON_ROTATE);
-        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
-                    u32(hov ? p.light : p.text), ICON_ROTATE);
-        ImGui::PopFont();
+        icon_centered(dl, ICON_ROTATE, bp, bp + bs, 18.0f, u32(hov ? p.light : p.text));
         right = bp.x - 6.0f;
     }
     {
