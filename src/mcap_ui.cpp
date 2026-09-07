@@ -185,11 +185,9 @@ void rail(ImVec2 pos, ImVec2 size) {
     if (rail_btn(ICON_ROTATE, "Rotate video 90\xc2\xb0", false)) rotate_all();
     if (rail_btn(ICON_TIMELINE, "Sensors", false)) {}
 
-    // Bottom group.
-    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + size.y - BTN_H * 3.0f));
+    // Bottom: Settings, held off the rail's bottom edge.
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + size.y - BTN_H - 12.0f));
     if (rail_btn(ICON_SETTINGS, "Settings", settings::is_open())) settings::open();
-    if (rail_btn(ICON_PALETTE, "Cycle theme", false)) theme::cycle();
-    if (rail_btn(ICON_HELP, "About", false)) settings::open();
 
     ImGui::EndChild();
 }
