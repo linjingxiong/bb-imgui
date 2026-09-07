@@ -60,9 +60,9 @@ constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = 324.0f;
 
-// Icon sizes (Blockbench: .tool i ~20px, inline controls ~17px).
+// Icon sizes (Blockbench: .material-icons 22px, .tool 36x30).
 constexpr float RAIL_ICON_PX = 20.0f;
-constexpr float BTN_ICON_PX = 17.0f;
+constexpr float BTN_ICON_PX = 19.0f;
 
 // Per-axis plot colours — Blockbench's viewport axis colours (css/setup.css
 // --color-axis-{x,y,z}), same triplet EgoViewer's SensorPanel uses.
@@ -188,7 +188,7 @@ void rail(ImVec2 pos, ImVec2 size) {
 void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     const theme::Palette& p = theme::palette();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float HEAD = 27.0f; // Blockbench h3.panel_handle
+    const float HEAD = 32.0f; // Blockbench #center h3.panel_handle
 
     dl->AddRectFilled(pos, pos + size, u32(p.ui));
     dl->AddLine(ImVec2(pos.x, pos.y + HEAD), ImVec2(pos.x + size.x, pos.y + HEAD), u32(p.border),
@@ -197,22 +197,20 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     View& v = g_view[topic];
     if (v.rot < 0) v.rot = g_rotation;
 
-    bool panel_hov = ImGui::IsMouseHoveringRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), false);
     bool focused = (g_focus_topic == topic);
 
-    // Title — uppercase, small, muted (Blockbench panel_handle).
-    ImGui::PushFont(fonts::medium(), theme::size::CAPTION);
+    // Title — uppercase, muted (Blockbench panel_handle > label, 1.1em).
+    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
     dl->AddText(ImVec2(pos.x + 10, pos.y + (HEAD - ImGui::GetTextLineHeight()) * 0.5f),
                 u32(p.subtle_text), upper(topic).c_str());
     ImGui::PopFont();
 
-    // Controls: hit boxes always exist; glyphs only surface on panel hover
-    // (or while the popup is open / the panel is focused).
+    // Controls — always shown (Blockbench .panel_control opacity 0.7), full
+    // on hover / active.
     ImGui::PushID((topic + "vp").c_str());
-    bool show_ctl = panel_hov || focused || ImGui::IsPopupOpen("vset");
-    float rx = pos.x + size.x - 6.0f;
+    float rx = pos.x + size.x - 5.0f;
     auto hdr_btn = [&](const char* tag, const char* icon, bool active) -> bool {
-        ImVec2 bs(22.0f, 22.0f);
+        ImVec2 bs(24.0f, 24.0f);
         ImVec2 bp(rx - bs.x, pos.y + (HEAD - bs.y) * 0.5f);
         ImGui::PushID(tag);
         ImGui::SetCursorScreenPos(bp);
@@ -220,18 +218,15 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         bool hov = ImGui::IsItemHovered();
         bool clk = ImGui::IsItemClicked();
         ImGui::PopID();
-        if (show_ctl || active) {
-            if (active)
-                dl->AddRectFilled(bp, bp + bs, u32(p.selected), 3.0f);
-            else if (hov)
-                dl->AddRectFilled(bp, bp + bs, u32(p.selected), 3.0f);
-            ImGui::PushFont(fonts::body(), BTN_ICON_PX);
-            ImVec2 ts = ImGui::CalcTextSize(icon);
-            dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
-                        u32(hov || active ? p.light : p.subtle_text), icon);
-            ImGui::PopFont();
-        }
-        rx = bp.x - 2.0f;
+        if (hov || active)
+            dl->AddRectFilled(bp, bp + bs, u32(p.selected), 3.0f);
+        ImGui::PushFont(fonts::body(), BTN_ICON_PX);
+        ImVec2 ts = ImGui::CalcTextSize(icon);
+        ImVec4 c = (hov || active) ? p.light : ImVec4(p.subtle_text.x, p.subtle_text.y,
+                                                      p.subtle_text.z, 0.7f);
+        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f), u32(c), icon);
+        ImGui::PopFont();
+        rx = bp.x - 1.0f;
         return clk;
     };
 
