@@ -91,6 +91,28 @@ ImVec4 mix(const ImVec4& a, const ImVec4& b, float t) {
     return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t,
                   a.w + (b.w - a.w) * t);
 }
+
+// Blockbench-style tooltip: bright rounded card, dark text, dim shortcut.
+void tooltip(const char* text, const char* shortcut = nullptr) {
+    const theme::Palette& p = theme::palette();
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, u32(p.bright_ui));
+    ImGui::PushStyleColor(ImGuiCol_Text, u32(p.bright_ui_text));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 5));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    if (ImGui::BeginTooltip()) {
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::TextUnformatted(text);
+        if (shortcut && shortcut[0]) {
+            ImGui::SameLine(0, 10);
+            ImGui::TextColored(mix(p.bright_ui_text, p.bright_ui, 0.5f), "%s", shortcut);
+        }
+        ImGui::PopFont();
+        ImGui::EndTooltip();
+    }
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
+}
 ImVec2 operator+(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x + b.x, a.y + b.y); }
 
 // Draw a texture into `size` at the current cursor, rotated `rot` degrees CW.
@@ -163,7 +185,10 @@ void rail(ImVec2 pos, ImVec2 size) {
         if (active)
             dl->AddRectFilled(bp, ImVec2(bp.x + 2.0f, bp.y + bs.y), u32(p.accent));
         icon_centered(dl, icon, bp, bp + bs, RAIL_ICON_PX, u32(hov || active ? p.light : p.text));
-        if (hov && tip) ImGui::SetTooltip("%s", tip);
+        if (hov) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (tip) tooltip(tip);
+        }
         return clk;
     };
     auto rail_sep = [&] {
@@ -237,7 +262,10 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         bool hov = ImGui::IsItemHovered();
         bool clk = ImGui::IsItemClicked();
         ImGui::PopID();
-        if (hov && tip) ImGui::SetTooltip("%s", tip);
+        if (hov) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (tip) tooltip(tip);
+        }
         ImVec4 c = active ? p.accent
                           : hov ? p.light : ImVec4(p.text.x, p.text.y, p.text.z, 0.8f);
         icon_centered(dl, icon, bp, bp + bs, ICON, u32(c));
@@ -414,6 +442,7 @@ void transport(ImVec2 pos, ImVec2 size) {
     ImGui::SetCursorScreenPos(ImVec2(pc.x - 14.0f, pc.y - 14.0f));
     ImGui::InvisibleButton("##play", ImVec2(28.0f, 28.0f));
     bool phov = ImGui::IsItemHovered();
+    if (phov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     if (ImGui::IsItemClicked() && has_file()) g_pb->toggle();
     dl->AddCircleFilled(pc, 13.0f, u32(mix(p.ui, p.text, phov ? 0.20f : 0.09f)), 32);
     ImU32 gl = u32(has_file() ? (phov ? p.light : p.text) : p.subtle_text);
@@ -454,6 +483,7 @@ void transport(ImVec2 pos, ImVec2 size) {
         ImGui::SetCursorScreenPos(bp);
         ImGui::InvisibleButton("##rot", bs);
         bool hov = ImGui::IsItemHovered();
+        if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); tooltip("Rotate all"); }
         if (ImGui::IsItemClicked()) rotate_all();
         icon_centered(dl, ICON_ROTATE, bp, bp + bs, 18.0f, u32(hov ? p.light : p.text));
         right = bp.x - 6.0f;
@@ -469,6 +499,7 @@ void transport(ImVec2 pos, ImVec2 size) {
         ImGui::SetCursorScreenPos(bp);
         ImGui::InvisibleButton("##spd", bs);
         bool hov = ImGui::IsItemHovered();
+        if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); tooltip("Playback speed"); }
         if (ImGui::IsItemClicked() && has_file()) {
             int i = 0;
             for (; i < 4; ++i) if (SPEEDS[i] == g_pb->speed()) break;
@@ -495,6 +526,7 @@ void transport(ImVec2 pos, ImVec2 size) {
     ImGui::SetCursorScreenPos(ImVec2(tx0, ty - 12.0f));
     ImGui::InvisibleButton("##scrub", ImVec2(tw, 24.0f));
     bool shov = ImGui::IsItemHovered() || ImGui::IsItemActive();
+    if (shov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     if (ImGui::IsItemActive()) {
         float rel = std::clamp((ImGui::GetIO().MousePos.x - tx0) / tw, 0.0f, 1.0f);
         g_pb->seek(s + (uint64_t)(rel * span));
