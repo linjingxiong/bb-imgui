@@ -4,6 +4,7 @@
 #include "fonts.h"
 #include "icons.h"
 #include "playback.h"
+#include "settings.h"
 #include "theme.h"
 #include "video_texture.h"
 
@@ -41,8 +42,8 @@ std::map<std::string, float> g_imu_scale;
 // Per-video-panel view state + the one panel (if any) expanded to fill the
 // stage. Reset on file open.
 struct View {
-    int rot = -1;  // -1 => seed from g_rotation on first use
-    int fit = 0;   // 0 = contain (letterbox), 1 = cover (crop to fill)
+    int rot = -1;  // -1 => seed from settings on first use
+    int fit = -1;  // -1 => seed; then 0 = contain (letterbox), 1 = cover (fill)
 };
 std::map<std::string, View> g_view;
 std::string g_focus_topic;
@@ -185,9 +186,10 @@ void rail(ImVec2 pos, ImVec2 size) {
     if (rail_btn(ICON_TIMELINE, "Sensors", false)) {}
 
     // Bottom group.
-    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + size.y - BTN_H * 2.0f));
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + size.y - BTN_H * 3.0f));
+    if (rail_btn(ICON_SETTINGS, "Settings", settings::is_open())) settings::open();
     if (rail_btn(ICON_PALETTE, "Cycle theme", false)) theme::cycle();
-    if (rail_btn(ICON_HELP, "About", false)) {}
+    if (rail_btn(ICON_HELP, "About", false)) settings::open();
 
     ImGui::EndChild();
 }
@@ -212,6 +214,7 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
 
     View& v = g_view[topic];
     if (v.rot < 0) v.rot = g_rotation;
+    if (v.fit < 0) v.fit = settings::get().default_fit;
 
     bool focused = (g_focus_topic == topic);
 
@@ -809,11 +812,15 @@ void open_path(const char* utf8_path) {
     g_selected_topic.clear();
     g_view.clear();
     g_focus_topic.clear();
-    if (g_pb->open(utf8_path))
+    g_rotation = settings::get().default_rotation; // panels seed from this
+    if (g_pb->open(utf8_path)) {
         std::fprintf(stderr, "mcap: opened %s (%zu topics, %zu video)\n", utf8_path,
                      g_pb->topics().size(), g_pb->video_topics().size());
-    else
+        g_pb->set_speed(settings::get().default_speed);
+        if (settings::get().autoplay_on_open) g_pb->play();
+    } else {
         std::fprintf(stderr, "mcap: failed to open %s\n", utf8_path);
+    }
 }
 
 bool has_file() { return g_pb && g_pb->is_open(); }
@@ -843,6 +850,12 @@ void panel_splitter(ImVec2 panel_pos, float panel_h) {
 
 void layout(ImVec2 o, ImVec2 sz) {
     if (sz.x <= 0 || sz.y <= 0) return;
+
+    // Loop: when playback runs off the end, jump back to the start.
+    if (settings::get().loop_at_end && has_file() && g_pb->playing()) {
+        uint64_t e = g_pb->end_time_us(), s = g_pb->start_time_us();
+        if (e > s && g_pb->current_time_us() + 40'000 >= e) g_pb->seek(s);
+    }
 
     float body_w = sz.x - RAIL_W;
     float panel_w = std::clamp(g_panel_w, PANEL_W_MIN,

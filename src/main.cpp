@@ -17,6 +17,7 @@
 #include "logo.h"
 #include "mcap_ui.h"
 #include "playback.h"
+#include "settings.h"
 #include "menu.h"
 #include "shell.h"
 #include "theme.h"
@@ -355,6 +356,7 @@ int main(int argc, char** argv) {
     io.IniFilename = nullptr; // TODO: persist layout under a real path
 
     theme::load(); // builds the theme registry + applies the remembered theme
+    settings::load(); // <exe>/settings.json — may re-apply a theme by name
     fonts::install(1.0f);
 
     static const shell::ProjectTab tabs[] = {
@@ -482,6 +484,7 @@ int main(int argc, char** argv) {
         }
 
         shell::end();
+        settings::draw(); // modal, stacks on top of everything
 
         ImGui::Render();
 

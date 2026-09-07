@@ -407,7 +407,7 @@ void apply(const Palette& p) {
     col[ImGuiCol_TextSelectedBg] = with_alpha(p.accent, p.is_dark ? 0.35f : 0.22f);
     col[ImGuiCol_NavCursor] = p.accent;
     col[ImGuiCol_DragDropTarget] = p.accent;
-    col[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.45f);
+    col[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.6f); // Blockbench dialog backdrop
 }
 
 const Palette& palette() { return g_current; }
