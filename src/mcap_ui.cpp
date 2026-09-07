@@ -38,6 +38,21 @@ int g_rotation = 90; // degrees CW — the Ego device's cameras are mounted side
 // shrinks (EgoViewer's accMaxSeen_/gyroMaxSeen_). Reset on file open.
 std::map<std::string, float> g_imu_scale;
 
+// Per-video-panel view state + the one panel (if any) expanded to fill the
+// stage. Reset on file open.
+struct View {
+    int rot = -1;  // -1 => seed from g_rotation on first use
+    int fit = 0;   // 0 = contain (letterbox), 1 = cover (crop to fill)
+};
+std::map<std::string, View> g_view;
+std::string g_focus_topic;
+
+void rotate_all() {
+    g_rotation = (g_rotation + 90) % 360;
+    for (auto& kv : g_view)
+        kv.second.rot = ((((kv.second.rot % 360) + 360) % 360) + 90) % 360;
+}
+
 // Layout metrics (Ohwow reference). The right panel width is user-draggable.
 constexpr float RAIL_W = 48.0f;
 constexpr float TRANSPORT_H = 50.0f;
@@ -141,10 +156,12 @@ void rail(ImVec2 pos, ImVec2 size) {
         g_textures.clear();
         g_selected_topic.clear();
         g_imu_scale.clear();
+        g_view.clear();
+        g_focus_topic.clear();
     }
     rail_sep();
     if (rail_btn(ICON_FOLDER_OPEN, "Open MCAP\xe2\x80\xa6", false)) open_dialog();
-    if (rail_btn(ICON_ROTATE, "Rotate video 90\xc2\xb0", false)) g_rotation = (g_rotation + 90) % 360;
+    if (rail_btn(ICON_ROTATE, "Rotate video 90\xc2\xb0", false)) rotate_all();
     if (rail_btn(ICON_TIMELINE, "Sensors", false)) {}
 
     // Bottom group.
@@ -153,6 +170,100 @@ void rail(ImVec2 pos, ImVec2 size) {
     if (rail_btn(ICON_HELP, "About", false)) {}
 
     ImGui::EndChild();
+}
+
+// ── Video panel ────────────────────────────────────────────────────────
+// A Foxglove-style image panel: a bordered card with a title bar (topic
+// name + expand / settings / more icons) over a letterboxed frame. The
+// settings popup carries rotation + fit mode (per panel).
+void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
+    const theme::Palette& p = theme::palette();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float HEAD = 28.0f;
+    const float R = 5.0f;
+
+    dl->AddRectFilled(pos, pos + size, u32(p.ui), R);
+    dl->AddRect(pos, pos + size, u32(p.border), R, 0, 1.0f);
+    dl->AddLine(ImVec2(pos.x + 1, pos.y + HEAD), ImVec2(pos.x + size.x - 1, pos.y + HEAD),
+                u32(p.border), 1.0f);
+
+    View& v = g_view[topic];
+    if (v.rot < 0) v.rot = g_rotation;
+
+    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+    dl->AddText(ImVec2(pos.x + 10, pos.y + (HEAD - ImGui::GetTextLineHeight()) * 0.5f), u32(p.text),
+                short_topic(topic));
+    ImGui::PopFont();
+
+    // Right icon cluster (drawn right-to-left).
+    float rx = pos.x + size.x - 6.0f;
+    auto hdr_btn = [&](const char* tag, const char* icon, bool active) -> bool {
+        ImVec2 bs(22.0f, 22.0f);
+        ImVec2 bp(rx - bs.x, pos.y + (HEAD - bs.y) * 0.5f);
+        ImGui::PushID((topic + tag).c_str());
+        ImGui::SetCursorScreenPos(bp);
+        ImGui::InvisibleButton("b", bs);
+        bool hov = ImGui::IsItemHovered();
+        bool clk = ImGui::IsItemClicked();
+        ImGui::PopID();
+        if (hov || active)
+            dl->AddRectFilled(bp, bp + bs, u32(with_alpha(p.selected, active ? 0.9f : 0.55f)), 4.0f);
+        ImGui::PushFont(fonts::body(), 15.0f);
+        ImVec2 ts = ImGui::CalcTextSize(icon);
+        dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
+                    u32(hov || active ? p.light : p.subtle_text), icon);
+        ImGui::PopFont();
+        rx = bp.x - 3.0f;
+        return clk;
+    };
+
+    ImGui::PushID((topic + "vp").c_str());
+    bool focused = (g_focus_topic == topic);
+    if (hdr_btn("more", ICON_MORE_VERT, false)) ImGui::OpenPopup("vset");
+    if (hdr_btn("set", ICON_SETTINGS, ImGui::IsPopupOpen("vset"))) ImGui::OpenPopup("vset");
+    if (hdr_btn("exp", focused ? ICON_FULLSCREEN_EXIT : ICON_FULLSCREEN, focused))
+        g_focus_topic = focused ? std::string() : topic;
+
+    ImGui::SetNextWindowPos(ImVec2(pos.x + size.x - 6.0f, pos.y + HEAD + 4.0f), ImGuiCond_Always,
+                            ImVec2(1.0f, 0.0f));
+    if (ImGui::BeginPopup("vset")) {
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::Dummy(ImVec2(196.0f, 0.0f)); // establish a stable popup width for segmented()
+        ImGui::TextColored(p.subtle_text, "Rotation");
+        static const char* ROT[] = {"0\xc2\xb0", "90\xc2\xb0", "180\xc2\xb0", "270\xc2\xb0"};
+        int ri = (((v.rot % 360) + 360) % 360) / 90;
+        if (bb::segmented("rot", &ri, ROT, 4)) v.rot = ri * 90;
+        ImGui::Dummy(ImVec2(0, 6));
+        ImGui::TextColored(p.subtle_text, "Fit");
+        static const char* FIT[] = {"Contain", "Cover"};
+        bb::segmented("fit", &v.fit, FIT, 2);
+        ImGui::PopFont();
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+
+    // Content: letterboxed / cover-scaled frame, clipped to the card body.
+    ImVec2 c0(pos.x + 1.0f, pos.y + HEAD + 1.0f);
+    ImVec2 csz(size.x - 2.0f, size.y - HEAD - 2.0f);
+    if (csz.x < 4.0f || csz.y < 4.0f) return;
+    dl->PushClipRect(c0, ImVec2(c0.x + csz.x, c0.y + csz.y), true);
+
+    auto& tex = g_textures[topic];
+    if (!tex) tex = std::make_unique<mp::VideoTexture>(g_device, g_queue);
+    if (auto frame = g_pb->latest_frame(topic)) tex->update(frame);
+
+    if (tex->valid() && tex->width() > 0 && tex->height() > 0) {
+        bool rot90 = ((((v.rot % 360) + 360) % 360) % 180) != 0;
+        float tw = rot90 ? (float)tex->height() : (float)tex->width();
+        float th = rot90 ? (float)tex->width() : (float)tex->height();
+        float sc = v.fit == 0 ? std::min(csz.x / tw, csz.y / th)
+                              : std::max(csz.x / tw, csz.y / th);
+        float dw = tw * sc, dh = th * sc;
+        ImVec2 ip(c0.x + (csz.x - dw) * 0.5f, c0.y + (csz.y - dh) * 0.5f);
+        ImGui::SetCursorScreenPos(ip);
+        draw_video(ImVec2(dw, dh), tex->id(), v.rot);
+    }
+    dl->PopClipRect();
 }
 
 // ── Centre video stage ─────────────────────────────────────────────────
@@ -185,38 +296,27 @@ void display(ImVec2 pos, ImVec2 size) {
     }
 
     const auto& vts = g_pb->video_topics();
+    const float pad = 10.0f, gap = 8.0f;
+
+    bool focus_valid =
+        !g_focus_topic.empty() &&
+        std::find(vts.begin(), vts.end(), g_focus_topic) != vts.end();
+    if (focus_valid) {
+        video_panel(g_focus_topic, ImVec2(pos.x + pad, pos.y + pad),
+                    ImVec2(size.x - 2 * pad, size.y - 2 * pad));
+        ImGui::EndChild();
+        return;
+    }
+
     int n = (int)vts.size();
     int cols = n == 1 ? 1 : 2;
     int rows = (n + cols - 1) / cols;
-    const float pad = 12.0f, gap = 8.0f;
     float cw = (size.x - 2 * pad - gap * (cols - 1)) / cols;
     float ch = (size.y - 2 * pad - gap * (rows - 1)) / rows;
-    bool rot90 = (((g_rotation % 360) + 360) % 360) % 180 != 0;
-
     for (int i = 0; i < n; ++i) {
-        const std::string& topic = vts[i];
         int gx = i % cols, gy = i / cols;
-        ImVec2 cell(pos.x + pad + gx * (cw + gap), pos.y + pad + gy * (ch + gap));
-
-        auto& tex = g_textures[topic];
-        if (!tex) tex = std::make_unique<mp::VideoTexture>(g_device, g_queue);
-        if (auto frame = g_pb->latest_frame(topic)) tex->update(frame);
-
-        float tw = rot90 ? (float)tex->height() : (float)tex->width();
-        float th = rot90 ? (float)tex->width() : (float)tex->height();
-        if (!tex->valid() || tw <= 0 || th <= 0) { tw = 16.0f; th = 9.0f; }
-        float sc = std::min(cw / tw, ch / th);
-        float dw = tw * sc, dh = th * sc;
-        ImVec2 ip(cell.x + (cw - dw) * 0.5f, cell.y + (ch - dh) * 0.5f);
-
-        if (tex->valid()) {
-            ImGui::SetCursorScreenPos(ip);
-            draw_video(ImVec2(dw, dh), tex->id(), g_rotation);
-        }
-        ImGui::PushFont(nullptr, theme::size::SMALL);
-        dl->AddText(ImVec2(cell.x + 4, cell.y + 2), u32(with_alpha(p.light, 0.75f)),
-                    short_topic(topic));
-        ImGui::PopFont();
+        video_panel(vts[i], ImVec2(pos.x + pad + gx * (cw + gap), pos.y + pad + gy * (ch + gap)),
+                    ImVec2(cw, ch));
     }
 
     ImGui::EndChild();
@@ -284,7 +384,7 @@ void transport(ImVec2 pos, ImVec2 size) {
         ImGui::SetCursorScreenPos(bp);
         ImGui::InvisibleButton("##rot", bs);
         bool hov = ImGui::IsItemHovered();
-        if (ImGui::IsItemClicked()) g_rotation = (g_rotation + 90) % 360;
+        if (ImGui::IsItemClicked()) rotate_all();
         ImGui::PushFont(fonts::body(), 17.0f);
         ImVec2 ts = ImGui::CalcTextSize(ICON_ROTATE);
         dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
@@ -680,6 +780,8 @@ void open_path(const char* utf8_path) {
     g_textures.clear();
     g_imu_scale.clear();
     g_selected_topic.clear();
+    g_view.clear();
+    g_focus_topic.clear();
     if (g_pb->open(utf8_path))
         std::fprintf(stderr, "mcap: opened %s (%zu topics, %zu video)\n", utf8_path,
                      g_pb->topics().size(), g_pb->video_topics().size());

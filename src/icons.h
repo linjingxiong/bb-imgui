@@ -87,3 +87,4 @@
 #define ICON_FIT_SCREEN         u8"\uea10"
 #define ICON_ASPECT_RATIO       u8"\ue85b"
 #define ICON_TIMELINE           u8"\ue922"
+#define ICON_FULLSCREEN_EXIT    u8"\ue5d1"
