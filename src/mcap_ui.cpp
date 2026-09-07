@@ -207,6 +207,7 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     auto snap = [](ImVec2 v) { return ImVec2(std::floor(v.x + 0.5f), std::floor(v.y + 0.5f)); };
 
     dl->AddRectFilled(pos, pos + size, u32(p.ui));
+    dl->AddRect(pos, pos + size, u32(p.border), 0.0f, 0, 1.0f); // card floats on the stage
     dl->AddLine(ImVec2(pos.x, pos.y + HEAD), ImVec2(pos.x + size.x, pos.y + HEAD), u32(p.border),
                 1.0f);
 
@@ -332,27 +333,58 @@ void display(ImVec2 pos, ImVec2 size) {
         return;
     }
 
-    // Blockbench tiles panels flush; the only seams are 1px --color-border.
-    // Snap every panel edge to a whole pixel so text/icons inside stay crisp.
+    // Aspect-fit auto grid: pick the column count that lets each video (plus
+    // its header) be the largest, size every card to that, then centre the
+    // block — and each ragged row — on the dark stage.
     int n = (int)vts.size();
-    int cols = n == 1 ? 1 : 2;
+    const float HEAD = 32.0f, PAD = 4.0f, MARGIN = 12.0f, GAP = 8.0f;
+
+    // Representative aspect in display orientation (falls back before the
+    // first frame decodes: portrait if the default rotation is 90/270).
+    float aw = 16.0f, ah = 9.0f;
+    {
+        const std::string& t0 = vts[0];
+        int drot = (g_view.count(t0) && g_view[t0].rot >= 0) ? g_view[t0].rot
+                                                             : settings::get().default_rotation;
+        bool rot90 = ((((drot % 360) + 360) % 360) % 180) != 0;
+        auto it = g_textures.find(t0);
+        if (it != g_textures.end() && it->second && it->second->valid() &&
+            it->second->width() > 0 && it->second->height() > 0) {
+            float w = (float)it->second->width(), h = (float)it->second->height();
+            aw = rot90 ? h : w;
+            ah = rot90 ? w : h;
+        } else if (rot90) {
+            aw = 9.0f;
+            ah = 16.0f;
+        }
+    }
+
+    float W = size.x - 2 * MARGIN, H = size.y - 2 * MARGIN;
+    int cols = 1;
+    float best = 0.0f;
+    for (int c = 1; c <= n; ++c) {
+        int r = (n + c - 1) / c;
+        float vidW = (W - (c - 1) * GAP) / c - PAD;
+        float vidH = (H - (r - 1) * GAP) / r - HEAD - PAD;
+        if (vidW <= 4.0f || vidH <= 4.0f) continue;
+        float sc = std::min(vidW / aw, vidH / ah);
+        if (sc > best) { best = sc; cols = c; }
+    }
     int rows = (n + cols - 1) / cols;
-    float ox = std::floor(pos.x), oy = std::floor(pos.y);
+    if (best <= 0.0f) best = std::min((W / cols) / aw, (H / rows) / ah);
+
+    float cardW = std::floor(aw * best + PAD);
+    float cardH = std::floor(ah * best + HEAD + PAD);
+    float blockH = rows * cardH + (rows - 1) * GAP;
+    float y0 = std::floor(pos.y + (size.y - blockH) * 0.5f);
+
     for (int i = 0; i < n; ++i) {
         int gx = i % cols, gy = i / cols;
-        float x0 = std::floor(ox + size.x * gx / cols);
-        float x1 = std::floor(ox + size.x * (gx + 1) / cols);
-        float y0 = std::floor(oy + size.y * gy / rows);
-        float y1 = std::floor(oy + size.y * (gy + 1) / rows);
-        video_panel(vts[i], ImVec2(x0, y0), ImVec2(x1 - x0, y1 - y0));
-    }
-    for (int c = 1; c < cols; ++c) {
-        float x = std::floor(ox + size.x * c / cols);
-        dl->AddLine(ImVec2(x, oy), ImVec2(x, oy + size.y), u32(p.border), 1.0f);
-    }
-    for (int r = 1; r < rows; ++r) {
-        float y = std::floor(oy + size.y * r / rows);
-        dl->AddLine(ImVec2(ox, y), ImVec2(ox + size.x, y), u32(p.border), 1.0f);
+        int in_row = (gy == rows - 1) ? (n - gy * cols) : cols;
+        float row_w = in_row * cardW + (in_row - 1) * GAP;
+        float rx = std::floor(pos.x + (size.x - row_w) * 0.5f);
+        video_panel(vts[i], ImVec2(rx + gx * (cardW + GAP), y0 + gy * (cardH + GAP)),
+                    ImVec2(cardW, cardH));
     }
 
     ImGui::EndChild();
