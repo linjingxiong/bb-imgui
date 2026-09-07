@@ -74,7 +74,7 @@ const Palette OHWOW_DARK = {
     /*is_dark*/ true,
 };
 
-Palette g_current = OHWOW_DARK;
+Palette g_current = BLOCKBENCH_DARK;
 
 int hex_nibble(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -320,7 +320,7 @@ Palette load() {
         }
     }
     if (std::ifstream f{settings_path()}) std::getline(f, want);
-    if (want.empty() || !find(want)) want = "Ohwow";
+    if (want.empty() || !find(want)) want = "Blockbench Dark";
     set(want);
     return g_current;
 }

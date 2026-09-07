@@ -53,20 +53,24 @@ void rotate_all() {
         kv.second.rot = ((((kv.second.rot % 360) + 360) % 360) + 90) % 360;
 }
 
-// Layout metrics (Ohwow reference). The right panel width is user-draggable.
+// Layout metrics. The right panel width is user-draggable.
 constexpr float RAIL_W = 48.0f;
 constexpr float TRANSPORT_H = 50.0f;
 constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = 324.0f;
 
-// EgoViewer SensorPanel axis colours (softer than theme::axis).
-const ImVec4 kAxisR = ImVec4(0xEF / 255.0f, 0x44 / 255.0f, 0x44 / 255.0f, 1.0f);
-const ImVec4 kAxisG = ImVec4(0x22 / 255.0f, 0xC5 / 255.0f, 0x5E / 255.0f, 1.0f);
-const ImVec4 kAxisB = ImVec4(0x3B / 255.0f, 0x82 / 255.0f, 0xF6 / 255.0f, 1.0f);
+// Icon sizes (Blockbench: .tool i ~20px, inline controls ~17px).
+constexpr float RAIL_ICON_PX = 20.0f;
+constexpr float BTN_ICON_PX = 17.0f;
+
+// Per-axis plot colours — Blockbench's viewport axis colours (css/setup.css
+// --color-axis-{x,y,z}), same triplet EgoViewer's SensorPanel uses.
+const ImVec4 kAxisR = theme::axis::X;
+const ImVec4 kAxisG = theme::axis::Y;
+const ImVec4 kAxisB = theme::axis::Z;
 
 ImU32 u32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
-ImVec4 with_alpha(const ImVec4& c, float a) { return ImVec4(c.x, c.y, c.z, a); }
 ImVec4 mix(const ImVec4& a, const ImVec4& b, float t) {
     return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t,
                   a.w + (b.w - a.w) * t);
@@ -134,10 +138,10 @@ void rail(ImVec2 pos, ImVec2 size) {
         if (active)
             dl->AddRectFilled(bp, bp + bs, u32(p.selected));
         else if (hov)
-            dl->AddRectFilled(bp, bp + bs, u32(with_alpha(p.selected, 0.5f)));
+            dl->AddRectFilled(bp, bp + bs, u32(p.button));
         if (active)
             dl->AddRectFilled(bp, ImVec2(bp.x + 2.0f, bp.y + bs.y), u32(p.accent));
-        ImGui::PushFont(fonts::body(), 20.0f);
+        ImGui::PushFont(fonts::body(), RAIL_ICON_PX);
         ImVec2 ts = ImGui::CalcTextSize(icon);
         dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
                     u32(hov || active ? p.light : p.text), icon);
@@ -206,9 +210,11 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         bool hov = ImGui::IsItemHovered();
         bool clk = ImGui::IsItemClicked();
         ImGui::PopID();
-        if (hov || active)
-            dl->AddRectFilled(bp, bp + bs, u32(with_alpha(p.selected, active ? 0.9f : 0.55f)), 4.0f);
-        ImGui::PushFont(fonts::body(), 15.0f);
+        if (active)
+            dl->AddRectFilled(bp, bp + bs, u32(p.selected), 4.0f);
+        else if (hov)
+            dl->AddRectFilled(bp, bp + bs, u32(p.button), 4.0f);
+        ImGui::PushFont(fonts::body(), BTN_ICON_PX);
         ImVec2 ts = ImGui::CalcTextSize(icon);
         dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
                     u32(hov || active ? p.light : p.subtle_text), icon);
@@ -273,7 +279,7 @@ void display(ImVec2 pos, ImVec2 size) {
     ImGui::BeginChild("##display", size, ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(pos, pos + size, IM_COL32(9, 9, 9, 255)); // near-black stage
+    dl->AddRectFilled(pos, pos + size, u32(p.deep)); // Blockbench --color-dark stage
 
     const bool ready = has_file() && !g_pb->video_topics().empty();
     if (!ready) {
@@ -409,7 +415,7 @@ void transport(ImVec2 pos, ImVec2 size) {
             g_pb->set_speed(SPEEDS[(i + 1) % 4]);
         }
         if (hov) dl->AddRectFilled(bp, bp + bs, u32(p.selected), 6.0f);
-        else dl->AddRect(bp, bp + bs, u32(with_alpha(p.subtle_text, 0.45f)), 6.0f, 0, 1.0f);
+        else dl->AddRect(bp, bp + bs, u32(p.border), 6.0f, 0, 1.0f);
         ImVec2 ts = ImGui::CalcTextSize(sp);
         dl->AddText(ImVec2(bp.x + (bs.x - ts.x) * 0.5f, bp.y + (bs.y - ts.y) * 0.5f),
                     u32(hov ? p.light : p.text), sp);
@@ -434,12 +440,12 @@ void transport(ImVec2 pos, ImVec2 size) {
         g_pb->seek(s + (uint64_t)(rel * span));
     }
 
-    // Progress bar: a mid-grey rounded track; the played portion is a lighter
-    // fill with only its left corners rounded (its flat right edge is hidden
-    // under the playhead handle, so there's no half-pill nub mid-track).
+    // Progress bar: a dark rounded track (--color-dark) with an accent-filled
+    // played portion; only its left corners are rounded — the flat right edge
+    // is hidden under the playhead handle, so there's no half-pill nub.
     const float hh = 2.5f;                       // track half-height (5px)
-    ImU32 track_c = u32(mix(p.ui, p.text, shov ? 0.44f : 0.36f));
-    ImU32 fill_c = u32(shov ? mix(p.text, p.light, 0.6f) : mix(p.text, p.light, 0.3f));
+    ImU32 track_c = u32(p.deep);
+    ImU32 fill_c = u32(shov ? mix(p.accent, p.light, 0.2f) : p.accent);
     dl->AddRectFilled(ImVec2(tx0, ty - hh), ImVec2(tx1, ty + hh), track_c, hh);
     if (px > tx0 + 1.0f)
         dl->AddRectFilled(ImVec2(tx0, ty - hh), ImVec2(px, ty + hh), fill_c, hh,
@@ -457,12 +463,12 @@ void transport(ImVec2 pos, ImVec2 size) {
                       hw * 0.5f);
 
     // Ruler: faint labelled ticks (>= 1s apart) below the bar.
-    ImGui::PushFont(nullptr, theme::size::SMALL * 0.78f);
+    ImGui::PushFont(nullptr, theme::size::CAPTION);
     double span_s = span / 1e6;
     double major = std::max(1.0, nice_interval(span_s, std::max(2, (int)(tw / 116.0f))));
     float tick_top = ty + hh + 5.0f;
-    ImU32 tick_c = u32(with_alpha(p.subtle_text, 0.4f));
-    ImU32 lbl_c = u32(with_alpha(p.subtle_text, 0.85f));
+    ImU32 tick_c = u32(p.border);
+    ImU32 lbl_c = u32(p.subtle_text);
     for (double t = 0.0; t <= span_s + 1e-6; t += major) {
         float x = tx0 + (float)(t / span_s) * tw;
         dl->AddLine(ImVec2(x, tick_top), ImVec2(x, tick_top + 3.0f), tick_c, 1.0f);
@@ -503,8 +509,7 @@ void topic_list_body() {
         if (sel)
             dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + 24.0f), u32(p.selected), 3.0f);
         else if (hov)
-            dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + 24.0f), u32(with_alpha(p.selected, 0.4f)),
-                              3.0f);
+            dl->AddRectFilled(rp, ImVec2(rp.x + w, rp.y + 24.0f), u32(p.button), 3.0f);
         ImGui::PushFont(nullptr, theme::size::SMALL);
         float th = ImGui::GetTextLineHeight();
         dl->AddText(ImVec2(rp.x + 6, rp.y + (24.0f - th) * 0.5f),
@@ -574,12 +579,12 @@ void imu_plot(const std::string& topic, float height) {
     ImVec2 c1(pos.x + w, pos.y + height - 4.0f);
     dl->AddRectFilled(c0, c1, u32(p.deep));
 
-    const ImU32 grid = IM_COL32(255, 255, 255, 22);
+    const ImU32 grid = u32(p.grid);
     for (int i = 0; i <= 5; ++i) {
         float gx = c0.x + (c1.x - c0.x) * i / 5.0f;
         dl->AddLine(ImVec2(gx, c0.y), ImVec2(gx, c1.y), grid, 1.0f);
     }
-    ImGui::PushFont(nullptr, theme::size::SMALL * 0.8f);
+    ImGui::PushFont(nullptr, theme::size::CAPTION);
     int dec = scale >= 10 ? 0 : (scale >= 1 ? 1 : 2);
     for (int i = 0; i <= 4; ++i) {
         float f = 1.0f - i / 2.0f;
@@ -619,7 +624,7 @@ void imu_plot(const std::string& topic, float height) {
     }
     dl->PopClipRect();
 
-    ImGui::PushFont(nullptr, theme::size::SMALL * 0.85f);
+    ImGui::PushFont(nullptr, theme::size::CAPTION);
     static const char* names[3] = {"x", "y", "z"};
     double vals[3] = {latest.x, latest.y, latest.z};
     float ly = c1.y - 4.0f - 14.0f * 3;
@@ -645,7 +650,7 @@ void audio_panel(float height) {
     float w = ImGui::GetContentRegionAvail().x;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + height), u32(p.deep), theme::RADIUS);
-    ImGui::PushFont(nullptr, theme::size::SMALL * 0.85f);
+    ImGui::PushFont(nullptr, theme::size::CAPTION);
     dl->AddText(ImVec2(pos.x + 6, pos.y + 3), u32(p.subtle_text), "Audio");
     ImGui::PopFont();
 
@@ -665,14 +670,14 @@ void audio_panel(float height) {
         col = std::clamp(col, 0, cols - 1);
         peak[col] = std::max(peak[col], std::min(a.amp, 1.0f));
     }
-    ImU32 wav = u32(with_alpha(p.subtle_text, 0.8f));
+    ImU32 wav = u32(p.subtle_text);
     for (int i = 0; i < cols; ++i) {
         if (peak[i] <= 0.0f) continue;
         float x = pos.x + (i + 0.5f) * (w / cols);
         float h = std::max(0.5f, peak[i] * amp_h);
         dl->AddLine(ImVec2(x, cy - h), ImVec2(x, cy + h), wav, 1.0f);
     }
-    dl->AddLine(ImVec2(pos.x, cy), ImVec2(pos.x + w, cy), u32(with_alpha(p.subtle_text, 0.35f)), 1.0f);
+    dl->AddLine(ImVec2(pos.x, cy), ImVec2(pos.x + w, cy), u32(p.border), 1.0f);
     dl->AddLine(ImVec2(pos.x + w - 1, pos.y), ImVec2(pos.x + w - 1, pos.y + height),
                 u32(p.subtle_text), 1.0f);
     ImGui::Dummy(ImVec2(w, height));
