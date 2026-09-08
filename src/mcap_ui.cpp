@@ -704,6 +704,26 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     }
 }
 
+// Rotated display aspect (w/h) of a video topic, or 0 if the first frame
+// hasn't been decoded yet.
+float video_ar(const std::string& topic) {
+    auto it = g_textures.find(topic);
+    if (it == g_textures.end() || !it->second || !it->second->valid()) return 0.0f;
+    int w = it->second->width(), h = it->second->height();
+    if (w <= 0 || h <= 0) return 0.0f;
+    int rot = g_view.count(topic) ? g_view[topic].rot : g_rotation;
+    bool r90 = ((((rot % 360) + 360) % 360) % 180) != 0;
+    return (float)(r90 ? h : w) / (float)(r90 ? w : h);
+}
+
+// Fit a HEAD-topped panel of video aspect `ar` inside a `cw`x`ch` cell.
+ImVec2 fit_panel(float cw, float ch, float ar, float head) {
+    if (ar <= 0.0f) return ImVec2(cw, ch);
+    float pw = cw, ph = (pw - 4.0f) / ar + head + 4.0f;
+    if (ph > ch) { ph = ch; pw = (ph - head - 4.0f) * ar + 4.0f; }
+    return ImVec2(std::floor(pw), std::floor(ph));
+}
+
 // ── Centre video stage ─────────────────────────────────────────────────
 void display(ImVec2 pos, ImVec2 size) {
     const theme::Palette& p = theme::palette();
@@ -735,20 +755,29 @@ void display(ImVec2 pos, ImVec2 size) {
 
     const auto& vts = g_pb->video_topics();
 
+    const float GAP = 6.0f;
+    const float HEAD = 32.0f; // must match video_panel's header
+
+    // Centre a single panel, sized to the video aspect, in the whole stage.
+    auto one = [&](const std::string& topic) {
+        ImVec2 ps = fit_panel(size.x, size.y, video_ar(topic), HEAD);
+        ImVec2 pp(pos.x + (size.x - ps.x) * 0.5f, pos.y + (size.y - ps.y) * 0.5f);
+        video_panel(topic, snap(pp), ps);
+    };
+
     bool focus_valid =
         !g_focus_topic.empty() &&
         std::find(vts.begin(), vts.end(), g_focus_topic) != vts.end();
     if (focus_valid) {
-        video_panel(g_focus_topic, pos, size);
+        one(g_focus_topic);
         ImGui::EndChild();
         return;
     }
 
     const int n = (int)vts.size();
-    const float GAP = 6.0f;
 
     if (n == 1) {
-        video_panel(vts[0], pos, size);
+        one(vts[0]);
         ImGui::EndChild();
         return;
     }
@@ -761,7 +790,9 @@ void display(ImVec2 pos, ImVec2 size) {
 
         const float STRIP_W = 200.0f;
         float feat_w = std::floor(size.x - STRIP_W - GAP);
-        video_panel(g_featured, pos, ImVec2(feat_w, size.y));
+        ImVec2 fs = fit_panel(feat_w, size.y, video_ar(g_featured), HEAD);
+        ImVec2 fp(pos.x + (feat_w - fs.x) * 0.5f, pos.y + (size.y - fs.y) * 0.5f);
+        video_panel(g_featured, snap(fp), fs);
 
         ImVec2 sp(std::floor(pos.x + feat_w + GAP), pos.y);
         ImGui::SetCursorScreenPos(sp);
@@ -791,16 +822,21 @@ void display(ImVec2 pos, ImVec2 size) {
         return;
     }
 
-    // ── Grid: 1 full / 2 halved / 3+ two columns, a lone last cell centred ──
+    // ── Grid: 2 columns, a lone last cell centred; panels sized to the video
+    //    aspect and the whole block centred in the stage (no letterbox band). ──
     int rows = (n + 1) / 2;
     float cw = std::floor((size.x - GAP) / 2.0f);
     float ch = std::floor((size.y - GAP * (rows - 1)) / rows);
+    ImVec2 ps = fit_panel(cw, ch, video_ar(vts[0]), HEAD);
+    float block_h = rows * ps.y + GAP * (rows - 1);
+    float y0 = pos.y + std::floor((size.y - block_h) * 0.5f);
+    float x0 = pos.x + std::floor((size.x - (2.0f * ps.x + GAP)) * 0.5f);
     for (int i = 0; i < n; ++i) {
         int gy = i / 2, gx = i % 2;
         int in_row = (gy == rows - 1) ? (n - gy * 2) : 2;
-        float x_off = (in_row == 1) ? std::floor((cw + GAP) * 0.5f) : 0.0f;
-        video_panel(vts[i], ImVec2(pos.x + x_off + gx * (cw + GAP), pos.y + gy * (ch + GAP)),
-                    ImVec2(cw, ch));
+        float px = (in_row == 1) ? (pos.x + std::floor((size.x - ps.x) * 0.5f))
+                                 : (x0 + gx * (ps.x + GAP));
+        video_panel(vts[i], snap(ImVec2(px, y0 + gy * (ps.y + GAP))), ps);
     }
 
     ImGui::EndChild();
