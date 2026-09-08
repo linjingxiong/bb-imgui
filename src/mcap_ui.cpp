@@ -540,7 +540,13 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
             dl->AddRect(q0, q1, u32(fade(p.light, 0.15f)), 5.0f, 0, 1.0f);
 
             // ── tab bar: Acc / Gyro / Audio + collapse chevron ──────────
+            // Blockbench style: the selected tab shares the content's
+            // background and joins it seamlessly; the bar itself is a
+            // distinct darker-grey strip.
             const float TB = 26.0f;
+            const ImU32 cbg = u32(fade(p.frame, 0.9f)); // chart / selected-tab bg
+            dl->AddRectFilled(q0, ImVec2(q1.x, q0.y + TB), u32(fade(p.ui, 0.85f)), 5.0f,
+                              ImDrawFlags_RoundCornersTop);
             struct Tab { const char* name; int kind; bool on; };
             Tab tabs[3] = {{"Acc", 0, !st.accel.empty()},
                            {"Gyro", 1, !st.gyro.empty()},
@@ -551,19 +557,21 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
                 if (!tb.on) continue;
                 ImVec2 ts = ImGui::CalcTextSize(tb.name);
                 float tbw = 12.0f + ts.x + 12.0f;
-                ImVec2 t0(std::floor(tx), std::floor(q0.y + 3.0f));
-                ImVec2 t1(std::floor(tx + tbw), std::floor(q0.y + TB - 3.0f));
+                ImVec2 t0(std::floor(tx), std::floor(q0.y + 4.0f));
+                ImVec2 t1(std::floor(tx + tbw), std::floor(q0.y + TB));
                 ImGui::SetCursorScreenPos(t0);
                 ImGui::PushID(tb.kind);
-                ImGui::InvisibleButton("t", ImVec2(tbw, TB - 6.0f));
+                ImGui::InvisibleButton("t", ImVec2(tbw, TB - 4.0f));
                 bool th = ImGui::IsItemHovered();
                 if (th) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 if (ImGui::IsItemClicked()) v.sensor = tb.kind;
                 ImGui::PopID();
                 bool sel = (v.sensor == tb.kind);
-                if (sel) dl->AddRectFilled(t0, t1, u32(p.accent), 3.0f);
-                else if (th) dl->AddRectFilled(t0, t1, u32(fade(p.light, 0.08f)), 3.0f);
-                ImU32 fg = u32(sel ? p.accent_text : (th ? p.light : p.subtle_text));
+                if (sel) {
+                    dl->AddRectFilled(t0, t1, cbg, 4.0f, ImDrawFlags_RoundCornersTop);
+                    dl->AddRectFilled(t0, ImVec2(t1.x, t0.y + 2.0f), u32(p.accent), 0.0f);
+                }
+                ImU32 fg = u32(sel ? p.text : (th ? p.light : p.subtle_text));
                 dl->AddText(ImVec2(std::floor(t0.x + (tbw - ts.x) * 0.5f),
                                    std::floor(t0.y + ((t1.y - t0.y) - ts.y) * 0.5f)),
                             fg, tb.name);
@@ -586,9 +594,11 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
 
             // ── chart — the exact right-panel chart, over a translucent bg
             //    (the active tab already names it; legend is inside) ───────
-            ImVec2 cmin(q0.x + 2.0f, std::floor(q0.y + TB + 1.0f));
+            ImVec2 cmin(q0.x + 2.0f, std::floor(q0.y + TB));
             ImVec2 cmax(q1.x - 2.0f, q1.y - 3.0f);
-            ImU32 cbg = u32(fade(p.frame, 0.9f));
+            // Bridge the seam so the selected tab flows straight into the chart
+            // (imu_chart insets its own bg fill by 4px at the top).
+            dl->AddRectFilled(ImVec2(cmin.x, q0.y + TB - 1.0f), ImVec2(cmax.x, cmin.y + 6.0f), cbg);
             if (v.sensor == 2) audio_chart(dl, cmin, cmax, cbg);
             else imu_chart(dl, cmin, cmax, v.sensor == 1 ? st.gyro : st.accel, true, cbg);
         }
