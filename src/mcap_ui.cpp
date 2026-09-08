@@ -45,7 +45,7 @@ std::map<std::string, float> g_imu_scale;
 struct View {
     int rot = -1;     // -1 => seed from settings on first use
     int fit = -1;     // -1 => seed; then 0 = contain (letterbox), 1 = cover (fill)
-    int sensor = -1;  // -1 = inset closed, else open
+    int sensor = -1;  // -1 = inset closed; 0 = accel, 1 = gyro, 2 = audio
 };
 std::map<std::string, View> g_view;
 std::string g_focus_topic; // panel expanded to fill the stage (temporary)
@@ -238,7 +238,8 @@ SensorTopics sensor_topics() {
 // A compact accel/gyro/audio trace drawn into an explicit rect — same look
 // as imu_plot() / audio_panel() in the right panel, just smaller and over a
 // slightly translucent ground.
-void sensor_mini(ImDrawList* dl, ImVec2 r0, ImVec2 r1, int kind, const SensorTopics& st) {
+void sensor_mini(ImDrawList* dl, ImVec2 r0, ImVec2 r1, int kind, const SensorTopics& st,
+                 bool inline_legend = true) {
     const theme::Palette& p = theme::palette();
     const uint64_t now = g_pb->current_time_us();
     const uint64_t win = 5'000'000;
@@ -326,6 +327,7 @@ void sensor_mini(ImDrawList* dl, ImVec2 r0, ImVec2 r1, int kind, const SensorTop
     }
     dl->PopClipRect();
 
+    if (!inline_legend) return;
     ImGui::PushFont(nullptr, theme::size::CAPTION);
     static const char* names[3] = {"x", "y", "z"};
     double vals[3] = {last.x, last.y, last.z};
@@ -336,6 +338,32 @@ void sensor_mini(ImDrawList* dl, ImVec2 r0, ImVec2 r1, int kind, const SensorTop
         std::snprintf(b, sizeof(b), "%s  % .*f", names[a], scale >= 10 ? 2 : 3, vals[a]);
         dl->AddText(ImVec2(c0.x + 15.0f, ly), u32(acol[a]), b);
         ly += 14.0f;
+    }
+    ImGui::PopFont();
+}
+
+// The "X value" legend rows drawn beside a chart in the video-panel inset.
+void sensor_legend(ImDrawList* dl, ImVec2 at, int kind, const SensorTopics& st) {
+    const theme::Palette& p = theme::palette();
+    if (kind == 2) {
+        ImGui::PushFont(nullptr, theme::size::CAPTION);
+        dl->AddText(at, u32(p.subtle_text), "mono");
+        ImGui::PopFont();
+        return;
+    }
+    auto last = g_pb->imu_latest(kind == 1 ? st.gyro : st.accel);
+    const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
+    static const char* nm[3] = {"X", "Y", "Z"};
+    double vv[3] = {last.x, last.y, last.z};
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    float lh = ImGui::GetTextLineHeight() + 3.0f;
+    for (int a = 0; a < 3; ++a) {
+        float y = at.y + a * lh;
+        dl->AddCircleFilled(ImVec2(at.x + 4.0f, y + lh * 0.5f - 1.0f), 3.5f, u32(acol[a]));
+        dl->AddText(ImVec2(at.x + 13.0f, y), u32(acol[a]), nm[a]);
+        char b[24];
+        std::snprintf(b, sizeof(b), "% .2f", vv[a]);
+        dl->AddText(ImVec2(at.x + 30.0f, y), u32(p.text), b);
     }
     ImGui::PopFont();
 }
@@ -444,12 +472,11 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     }
     dl->PopClipRect();
 
-    // ── Sensor inset (bottom-left) — GYRO over ACCEL, right-panel style ─
+    // ── Sensor inset (bottom-left) ─────────────────────────────────────
     SensorTopics st = sensor_topics();
-    const bool has_imu = !st.accel.empty() || !st.gyro.empty();
-    if (has_imu && csz.x > 260.0f && csz.y > 240.0f) {
+    if (st.any() && csz.x > 260.0f && csz.y > 220.0f) {
         ImGui::PushID((topic + "sns").c_str());
-        ImU32 chip_bg = u32(fade(p.deep, 0.66f));
+        ImU32 chip_bg = u32(fade(p.deep, 0.72f));
 
         if (v.sensor < 0) {
             // Closed — a small "IMU" chip.
@@ -461,7 +488,7 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
             ImGui::InvisibleButton("chip", ImVec2(q1.x - q0.x, 22.0f));
             bool hov = ImGui::IsItemHovered();
             if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            if (ImGui::IsItemClicked()) v.sensor = 0;
+            if (ImGui::IsItemClicked()) v.sensor = st.first();
             dl->AddRectFilled(q0, q1, chip_bg, 4.0f);
             dl->AddRect(q0, q1, u32(fade(p.light, 0.15f)), 4.0f, 0, 1.0f);
             icon_centered(dl, ICON_TIMELINE, ImVec2(q0.x, q0.y), ImVec2(q0.x + 22.0f, q1.y), 14.0f,
@@ -471,48 +498,71 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
                         u32(hov ? p.light : p.text), "IMU");
             ImGui::PopFont();
         } else {
-            float iw = std::floor(std::clamp(csz.x * 0.50f, 200.0f, 340.0f));
-            float ih = std::floor(std::clamp(csz.y * 0.58f, 210.0f, 360.0f));
+            float iw = std::floor(std::clamp(csz.x * 0.54f, 260.0f, 400.0f));
+            float ih = std::floor(std::clamp(csz.y * 0.40f, 150.0f, 230.0f));
             ImVec2 q0(std::floor(c0.x + 8.0f), std::floor(c0.y + csz.y - 8.0f - ih));
             ImVec2 q1(q0.x + iw, q0.y + ih);
-            dl->AddRectFilled(q0, q1, chip_bg, 4.0f);
-            dl->AddRect(q0, q1, u32(fade(p.light, 0.15f)), 4.0f, 0, 1.0f);
+            dl->AddRectFilled(q0, q1, chip_bg, 5.0f);
+            dl->AddRect(q0, q1, u32(fade(p.light, 0.15f)), 5.0f, 0, 1.0f);
 
-            const float HH = 22.0f;
-            // header: icon + "IMU" + close
-            ImGui::PushFont(fonts::medium(), theme::size::CAPTION);
-            icon_centered(dl, ICON_TIMELINE, ImVec2(q0.x + 4.0f, q0.y), ImVec2(q0.x + 22.0f, q0.y + HH),
-                          14.0f, u32(p.subtle_text));
-            dl->AddText(ImVec2(q0.x + 22.0f, std::floor(q0.y + (HH - ImGui::GetTextLineHeight()) * 0.5f)),
-                        u32(p.text), "IMU");
-            ImGui::PopFont();
-            ImVec2 x0(q1.x - HH, q0.y), x1(q1.x, q0.y + HH);
-            ImGui::SetCursorScreenPos(x0);
-            ImGui::InvisibleButton("x", ImVec2(HH, HH));
-            bool xh = ImGui::IsItemHovered();
-            if (xh) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            if (ImGui::IsItemClicked()) v.sensor = -1;
-            icon_centered(dl, ICON_CLOSE, x0, x1, 12.0f, u32(xh ? p.light : p.subtle_text));
-            dl->AddLine(ImVec2(q0.x, q0.y + HH), ImVec2(q1.x, q0.y + HH), u32(fade(p.light, 0.12f)),
-                        1.0f);
-
-            // two stacked sections
-            struct Sec { const char* label; int kind; bool on; };
-            Sec secs[2] = {{"GYRO", 1, !st.gyro.empty()}, {"ACCEL", 0, !st.accel.empty()}};
-            int nsec = (secs[0].on ? 1 : 0) + (secs[1].on ? 1 : 0);
-            float area = (ih - HH);
-            float sh = area / std::max(1, nsec);
-            float sy = q0.y + HH;
-            for (auto& s : secs) {
-                if (!s.on) continue;
-                ImGui::PushFont(nullptr, theme::size::CAPTION);
-                dl->AddText(ImVec2(q0.x + 6.0f, std::floor(sy + 3.0f)), u32(p.subtle_text), s.label);
-                float lblh = ImGui::GetTextLineHeight() + 5.0f;
-                ImGui::PopFont();
-                sensor_mini(dl, ImVec2(q0.x + 1.0f, std::floor(sy + lblh)),
-                            ImVec2(q1.x - 1.0f, std::floor(sy + sh - 2.0f)), s.kind, st);
-                sy += sh;
+            // ── tab bar: Acc / Gyro / Audio + collapse chevron ──────────
+            const float TB = 26.0f;
+            struct Tab { const char* name; const char* icon; int kind; bool on; };
+            Tab tabs[3] = {{"Acc", ICON_VIBRATION, 0, !st.accel.empty()},
+                           {"Gyro", ICON_ADJUST, 1, !st.gyro.empty()},
+                           {"Audio", ICON_GRAPHIC_EQ, 2, st.audio}};
+            ImGui::PushFont(nullptr, theme::size::CAPTION);
+            float tx = q0.x + 5.0f;
+            for (auto& tb : tabs) {
+                if (!tb.on) continue;
+                float tbw = 20.0f + ImGui::CalcTextSize(tb.name).x + 10.0f;
+                ImVec2 t0(std::floor(tx), std::floor(q0.y + 3.0f));
+                ImVec2 t1(std::floor(tx + tbw), std::floor(q0.y + TB - 3.0f));
+                ImGui::SetCursorScreenPos(t0);
+                ImGui::PushID(tb.kind);
+                ImGui::InvisibleButton("t", ImVec2(tbw, TB - 6.0f));
+                bool th = ImGui::IsItemHovered();
+                if (th) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (ImGui::IsItemClicked()) v.sensor = tb.kind;
+                ImGui::PopID();
+                bool sel = (v.sensor == tb.kind);
+                if (sel) dl->AddRectFilled(t0, t1, u32(p.accent), 3.0f);
+                else if (th) dl->AddRectFilled(t0, t1, u32(fade(p.light, 0.08f)), 3.0f);
+                ImU32 fg = u32(sel ? p.accent_text : (th ? p.light : p.subtle_text));
+                icon_centered(dl, tb.icon, ImVec2(t0.x + 3.0f, t0.y), ImVec2(t0.x + 20.0f, t1.y),
+                              14.0f, fg);
+                dl->AddText(ImVec2(t0.x + 21.0f,
+                                   std::floor(t0.y + ((t1.y - t0.y) - ImGui::GetTextLineHeight()) * 0.5f)),
+                            fg, tb.name);
+                tx += tbw + 2.0f;
             }
+            ImGui::PopFont();
+            // collapse chevron
+            ImVec2 v0(q1.x - TB, q0.y), v1(q1.x, q0.y + TB);
+            ImGui::SetCursorScreenPos(v0);
+            ImGui::InvisibleButton("collapse", ImVec2(TB, TB));
+            bool vh = ImGui::IsItemHovered();
+            if (vh) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (ImGui::IsItemClicked()) v.sensor = -1;
+            icon_centered(dl, ICON_CARET_DOWN, v0, v1, 16.0f, u32(vh ? p.light : p.subtle_text));
+
+            // guard: selected topic vanished
+            if ((v.sensor == 0 && !tabs[0].on) || (v.sensor == 1 && !tabs[1].on) ||
+                (v.sensor == 2 && !tabs[2].on))
+                v.sensor = st.first();
+
+            // ── section label + legend (left) + chart (right) ──────────
+            float by = q0.y + TB + 2.0f;
+            const char* slabel = v.sensor == 0 ? "ACCEL" : v.sensor == 1 ? "GYRO" : "AUDIO";
+            ImGui::PushFont(fonts::medium(), theme::size::CAPTION);
+            dl->AddText(ImVec2(q0.x + 8.0f, std::floor(by)), u32(p.subtle_text), slabel);
+            float slh = ImGui::GetTextLineHeight() + 4.0f;
+            ImGui::PopFont();
+
+            float legend_w = 96.0f;
+            sensor_legend(dl, ImVec2(q0.x + 8.0f, std::floor(by + slh + 2.0f)), v.sensor, st);
+            sensor_mini(dl, ImVec2(std::floor(q0.x + legend_w), std::floor(by + slh)),
+                        ImVec2(q1.x - 6.0f, q1.y - 6.0f), v.sensor, st, /*inline_legend=*/false);
         }
         ImGui::PopID();
     }

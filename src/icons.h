@@ -93,3 +93,6 @@
 #define ICON_REPEAT             u8"\ue040"
 #define ICON_GRID_VIEW          u8"\ue9b0"
 #define ICON_VIEW_SIDEBAR       u8"\uf114"
+#define ICON_VIBRATION          u8"\uE62D"
+#define ICON_ADJUST             u8"\uE39E"
+#define ICON_GRAPHIC_EQ         u8"\uE01B"
