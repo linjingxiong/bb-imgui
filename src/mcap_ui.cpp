@@ -958,9 +958,9 @@ void transport(ImVec2 pos, ImVec2 size) {
         x = bp.x + w + 6.0f;
     }
 
-    if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 20.0f, false, x, 22.0f) && ready)
+    if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 23.0f, false, x, 24.0f) && ready)
         g_pb->seek(s);
-    x += 22.0f + 2.0f;
+    x += 24.0f + 2.0f;
 
     { // play — a filled circle, bigger than the skips
         const float R = 15.0f;
@@ -976,8 +976,18 @@ void transport(ImVec2 pos, ImVec2 size) {
             tooltip(ended ? "Replay" : playing ? "Pause" : "Play");
         }
         dl->AddCircleFilled(ImVec2(ccx, ccy), R, u32(hov ? p.light : mix(p.light, p.ui, 0.14f)), 64);
-        icon_centered(dl, ended ? ICON_REPLAY : playing ? ICON_PAUSE : ICON_PLAY, bp,
-                      bp + ImVec2(R * 2.0f, R * 2.0f), ended ? 18.0f : 20.0f, u32(p.frame));
+        // Faux-bold: the Material glyph drawn a few times at sub-pixel offsets.
+        {
+            const char* g = ended ? ICON_REPLAY : playing ? ICON_PAUSE : ICON_PLAY;
+            const float gpx = 20.0f;
+            ImGui::PushFont(fonts::body(), gpx);
+            ImVec2 ts = ImGui::CalcTextSize(g);
+            ImVec2 gp(std::floor(ccx - ts.x * 0.5f + 0.5f),
+                      std::floor(ccy - gpx * 0.5f + gpx * 0.10f + 0.5f));
+            for (ImVec2 o : {ImVec2(0, 0), ImVec2(0.9f, 0), ImVec2(0, 0.9f), ImVec2(0.9f, 0.9f)})
+                dl->AddText(ImVec2(gp.x + o.x, gp.y + o.y), u32(p.frame), g);
+            ImGui::PopFont();
+        }
         if (clk && ready) {
             if (ended) { g_pb->seek(s); g_pb->play(); }
             else g_pb->toggle();
@@ -985,9 +995,9 @@ void transport(ImVec2 pos, ImVec2 size) {
         x = ccx + R + 2.0f;
     }
 
-    if (ico_btn("last", ICON_SKIP_NEXT, "Jump to end", 20.0f, false, x, 22.0f) && ready)
+    if (ico_btn("last", ICON_SKIP_NEXT, "Jump to end", 23.0f, false, x, 24.0f) && ready)
         g_pb->seek(s + span);
-    x += 22.0f + 14.0f;
+    x += 24.0f + 14.0f;
 
     // ── time: elapsed (bright) / total (dim) ───────────────────────────
     ImGui::PushFont(nullptr, theme::size::SMALL);
