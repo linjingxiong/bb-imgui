@@ -283,7 +283,7 @@ void Playback::do_seek_catchup(uint64_t target_us) {
     // the panels stay blank until the first play. Keep this small — a large
     // margin decodes+shows dozens of frames past the target ("plays forward
     // after a scrub").
-    const uint64_t tail_us = 500'000;
+    const uint64_t tail_us = 80'000;
     const uint64_t tail_fwd_us = 120'000;
     const uint64_t warm_end = target_us > from_us + tail_us ? target_us - tail_us : from_us;
 

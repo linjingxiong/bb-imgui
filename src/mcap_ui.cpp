@@ -50,7 +50,6 @@ struct View {
 std::map<std::string, View> g_view;
 std::string g_focus_topic; // panel expanded to fill the stage (temporary)
 std::string g_featured;    // spotlight-layout main video
-bool g_scrub_resume = false; // was playing when the scrubber drag started
 
 // The one video panel (if any) currently showing the sensor inset, and which
 // tab (0 = accel, 1 = gyro, 2 = audio). Only one at a time. Reset on open.
@@ -1043,20 +1042,12 @@ void transport(ImVec2 pos, ImVec2 size) {
     ImGui::InvisibleButton("##scrub", ImVec2(sw2, 16.0f));
     bool scrub_active = ImGui::IsItemActive();
     if (ImGui::IsItemHovered() || scrub_active) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    // Hold playback while dragging so the scrubber tracks the mouse exactly
-    // (a live seek during playback would keep rolling forward); resume on
-    // release if it was playing.
-    if (ImGui::IsItemActivated() && ready && g_pb->playing()) {
-        g_pb->pause();
-        g_scrub_resume = true;
-    }
+    // A scrub pauses and leaves the video parked on the target frame — drag
+    // to a spot, that's where it stays. Press play to resume.
+    if (ImGui::IsItemActivated() && ready && g_pb->playing()) g_pb->pause();
     if (scrub_active && ready) {
         float rel = std::clamp((ImGui::GetIO().MousePos.x - scrub_x0) / sw2, 0.0f, 1.0f);
         g_pb->seek(s + (uint64_t)(rel * span));
-    }
-    if (ImGui::IsItemDeactivated() && ready && g_scrub_resume) {
-        g_pb->play();
-        g_scrub_resume = false;
     }
     float px = std::floor(scrub_x0 + sw2 * frac);
     dl->AddRectFilled(ImVec2(scrub_x0, cy - 2.0f), ImVec2(scrub_x1, cy + 2.0f),
