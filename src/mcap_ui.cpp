@@ -247,29 +247,11 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
     }
 
     const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
+    static const char* nm[3] = {"x", "y", "z"};
     const float y_label_w = 30.0f;
-    const float head_h = inline_legend ? 16.0f : 4.0f;
-    ImVec2 c0(amin.x + y_label_w, amin.y + head_h);
+    ImVec2 c0(amin.x + y_label_w, amin.y + 4.0f);
     ImVec2 c1(amax.x, amax.y - 4.0f);
     dl->AddRectFilled(c0, c1, bg);
-
-    // Blockbench Transform-field style readout row across the top: a small
-    // corner triangle in the axis colour + a dim letter + the neutral value.
-    if (inline_legend) {
-        ImGui::PushFont(nullptr, theme::size::CAPTION);
-        static const char* nm[3] = {"x", "y", "z"};
-        const float rw = (c1.x - c0.x) / 3.0f;
-        for (int a = 0; a < 3; ++a) {
-            float cx = c0.x + rw * a;
-            dl->AddTriangleFilled(ImVec2(cx, amin.y), ImVec2(cx + 6, amin.y),
-                                  ImVec2(cx, amin.y + 6), u32(acol[a]));
-            dl->AddText(ImVec2(cx + 10, amin.y - 1), u32(p.subtle_text), nm[a]);
-            char t[32];
-            std::snprintf(t, sizeof(t), "% .*f", scale >= 10 ? 2 : 3, lv[a]);
-            dl->AddText(ImVec2(cx + 20, amin.y - 1), u32(p.text), t);
-        }
-        ImGui::PopFont();
-    }
 
     const ImU32 grid = u32(p.grid);
     for (int i = 0; i <= 5; ++i) {
@@ -332,6 +314,21 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
     float hx = std::clamp(X(phead), c0.x, c1.x);
     dl->AddLine(ImVec2(hx, c0.y), ImVec2(hx, c1.y), u32(fade(p.light, 0.55f)), 1.0f);
     dl->PopClipRect();
+
+    // x/y/z readout, stacked in the chart's bottom-left corner: a small square
+    // in the axis colour + the letter and value in neutral text.
+    if (inline_legend) {
+        ImGui::PushFont(nullptr, theme::size::CAPTION);
+        float ly = c1.y - 4.0f - 14.0f * 3;
+        for (int a = 0; a < 3; ++a) {
+            dl->AddRectFilled(ImVec2(c0.x + 1, ly + 3), ImVec2(c0.x + 7, ly + 9), u32(acol[a]));
+            char t[40];
+            std::snprintf(t, sizeof(t), "%s  % .*f", nm[a], scale >= 10 ? 2 : 3, lv[a]);
+            dl->AddText(ImVec2(c0.x + 11, ly), u32(p.text), t);
+            ly += 14.0f;
+        }
+        ImGui::PopFont();
+    }
 }
 
 // One audio peak-envelope into [amin, amax] — same whole-file X axis + playhead.
@@ -528,15 +525,16 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
 
             // ── tab bar: Acc / Gyro / Audio + collapse chevron ──────────
             const float TB = 26.0f;
-            struct Tab { const char* name; const char* icon; int kind; bool on; };
-            Tab tabs[3] = {{"Acc", ICON_VIBRATION, 0, !st.accel.empty()},
-                           {"Gyro", ICON_ADJUST, 1, !st.gyro.empty()},
-                           {"Audio", ICON_GRAPHIC_EQ, 2, st.audio}};
-            ImGui::PushFont(nullptr, theme::size::CAPTION);
+            struct Tab { const char* name; int kind; bool on; };
+            Tab tabs[3] = {{"Acc", 0, !st.accel.empty()},
+                           {"Gyro", 1, !st.gyro.empty()},
+                           {"Audio", 2, st.audio}};
+            ImGui::PushFont(nullptr, theme::size::SMALL);
             float tx = q0.x + 5.0f;
             for (auto& tb : tabs) {
                 if (!tb.on) continue;
-                float tbw = 20.0f + ImGui::CalcTextSize(tb.name).x + 10.0f;
+                ImVec2 ts = ImGui::CalcTextSize(tb.name);
+                float tbw = 12.0f + ts.x + 12.0f;
                 ImVec2 t0(std::floor(tx), std::floor(q0.y + 3.0f));
                 ImVec2 t1(std::floor(tx + tbw), std::floor(q0.y + TB - 3.0f));
                 ImGui::SetCursorScreenPos(t0);
@@ -550,10 +548,8 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
                 if (sel) dl->AddRectFilled(t0, t1, u32(p.accent), 3.0f);
                 else if (th) dl->AddRectFilled(t0, t1, u32(fade(p.light, 0.08f)), 3.0f);
                 ImU32 fg = u32(sel ? p.accent_text : (th ? p.light : p.subtle_text));
-                icon_centered(dl, tb.icon, ImVec2(t0.x + 3.0f, t0.y), ImVec2(t0.x + 20.0f, t1.y),
-                              14.0f, fg);
-                dl->AddText(ImVec2(t0.x + 21.0f,
-                                   std::floor(t0.y + ((t1.y - t0.y) - ImGui::GetTextLineHeight()) * 0.5f)),
+                dl->AddText(ImVec2(std::floor(t0.x + (tbw - ts.x) * 0.5f),
+                                   std::floor(t0.y + ((t1.y - t0.y) - ts.y) * 0.5f)),
                             fg, tb.name);
                 tx += tbw + 2.0f;
             }
