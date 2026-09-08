@@ -70,7 +70,7 @@ constexpr float TRANSPORT_H = 44.0f;
 constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = 324.0f;
-bool g_panel_hidden = true; // right INSPECTOR panel collapsed (rail toggle); hidden by default
+bool g_panel_hidden = true; // left dock panel collapsed (rail toggle); hidden by default
 
 // Icon sizes (Blockbench: .material-icons 22px, .tool 36x30).
 constexpr float RAIL_ICON_PX = 24.0f;
@@ -217,7 +217,7 @@ void rail(ImVec2 pos, ImVec2 size) {
         }
     }
     if (has_file() && rail_btn(ICON_VIEW_SIDEBAR,
-                               g_panel_hidden ? "Show inspector" : "Hide inspector", g_panel_hidden))
+                               g_panel_hidden ? "Show panel" : "Hide panel", !g_panel_hidden))
         g_panel_hidden = !g_panel_hidden;
 
     // Bottom: Settings, held off the rail's bottom edge.
@@ -1191,40 +1191,20 @@ void sensors_body() {
     }
 }
 
+// The left dock panel. Sits between the rail and the video stage, toggled by
+// the rail's sidebar button, drag-resizable via panel_splitter. Empty for
+// now — content (device / IMU / audio / colour controls, EgoViewer style) is
+// a later batch; the *_body helpers above stay for that.
 void side_panel(ImVec2 pos, ImVec2 size) {
     const theme::Palette& p = theme::palette();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(pos, pos + size, u32(p.ui));
-    dl->AddLine(pos, ImVec2(pos.x, pos.y + size.y), u32(p.border), 1.0f);
-
-    // Header.
+    // A slim empty header strip + the border where it meets the stage.
     const float head_h = 34.0f;
     dl->AddLine(ImVec2(pos.x, pos.y + head_h), ImVec2(pos.x + size.x, pos.y + head_h),
                 u32(p.border), 1.0f);
-    ImGui::PushFont(fonts::medium(), theme::size::SMALL);
-    dl->AddText(ImVec2(pos.x + 14, pos.y + (head_h - ImGui::GetTextLineHeight()) * 0.5f),
-                u32(p.light), "INSPECTOR");
-    ImGui::PopFont();
-
-    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + head_h));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
-    ImGui::BeginChild("##sidebody", ImVec2(size.x, size.y - head_h), ImGuiChildFlags_None);
-
-    if (bb::collapsing("TOPICS")) {
-        topic_list_body();
-        ImGui::Dummy(ImVec2(0, 4));
-    }
-    if (bb::collapsing("MESSAGE")) {
-        inspector_body();
-        ImGui::Dummy(ImVec2(0, 4));
-    }
-    if (bb::collapsing("SENSORS")) {
-        sensors_body();
-        ImGui::Dummy(ImVec2(0, 4));
-    }
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
+    dl->AddLine(ImVec2(pos.x + size.x, pos.y), ImVec2(pos.x + size.x, pos.y + size.y),
+                u32(p.border), 1.0f);
 }
 
 } // namespace
@@ -1283,23 +1263,24 @@ void open_path(const char* utf8_path) {
 bool has_file() { return g_pb && g_pb->is_open(); }
 mp::Playback& playback() { return *g_pb; }
 
-// A vertical drag handle on the right panel's left edge. Submitted last (its
+// A vertical drag handle on the left panel's right edge. Submitted last (its
 // own child window) so it wins input over the video/panel children beneath.
-void panel_splitter(ImVec2 panel_pos, float panel_h) {
+// `edge_x` is the panel's right edge.
+void panel_splitter(float edge_x, ImVec2 area_pos, float panel_h) {
     const theme::Palette& p = theme::palette();
     const float grab = 10.0f;
-    ImGui::SetCursorScreenPos(ImVec2(panel_pos.x - grab * 0.5f, panel_pos.y));
+    ImGui::SetCursorScreenPos(ImVec2(edge_x - grab * 0.5f, area_pos.y));
     ImGui::BeginChild("##panelsplit", ImVec2(grab, panel_h), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::InvisibleButton("h", ImVec2(grab, panel_h));
     bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
     if (hov || act) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     if (act) {
-        // Dragging the handle left (mouse dx < 0) widens the right panel.
-        g_panel_w = std::clamp(g_panel_w - ImGui::GetIO().MouseDelta.x, PANEL_W_MIN, PANEL_W_MAX);
+        // Dragging the handle right (mouse dx > 0) widens the panel.
+        g_panel_w = std::clamp(g_panel_w + ImGui::GetIO().MouseDelta.x, PANEL_W_MIN, PANEL_W_MAX);
     }
-    ImGui::GetWindowDrawList()->AddLine(ImVec2(panel_pos.x, panel_pos.y),
-                                       ImVec2(panel_pos.x, panel_pos.y + panel_h),
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(edge_x, area_pos.y),
+                                       ImVec2(edge_x, area_pos.y + panel_h),
                                        u32(hov || act ? p.accent : p.border),
                                        hov || act ? 2.0f : 1.0f);
     ImGui::EndChild();
@@ -1330,17 +1311,18 @@ void layout(ImVec2 o, ImVec2 sz) {
     ImVec2 transport_pos(o.x + RAIL_W, o.y + region_h);
     ImVec2 transport_sz(body_w, TRANSPORT_H);
 
-    ImVec2 panel_pos(o.x + sz.x - panel_w, o.y);
+    // Left dock panel, then the video stage to its right.
+    ImVec2 panel_pos(o.x + RAIL_W, o.y);
     ImVec2 panel_sz(panel_w, region_h);
 
-    ImVec2 disp_pos(o.x + RAIL_W, o.y);
+    ImVec2 disp_pos(o.x + RAIL_W + panel_w, o.y);
     ImVec2 disp_sz(std::max(120.0f, body_w - panel_w), region_h);
 
     display(disp_pos, disp_sz);
     if (panel_w > 0.0f) side_panel(panel_pos, panel_sz);
     transport(transport_pos, transport_sz);
     rail(rail_pos, rail_sz);
-    if (panel_w > 0.0f) panel_splitter(panel_pos, panel_sz.y);
+    if (panel_w > 0.0f) panel_splitter(panel_pos.x + panel_w, o, panel_sz.y);
 }
 
 } // namespace mcap_ui
