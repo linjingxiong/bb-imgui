@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -40,6 +41,10 @@ public:
 
     // Topics that carry at least one message in this file.
     std::set<std::string> topics_with_messages() const;
+
+    // Total message count per topic, from the summary statistics (0 if the
+    // file has no statistics section).
+    std::map<std::string, uint64_t> message_totals() const;
 
     // The embedded "ego_metadata" Metadata record's JSON, or "" if absent.
     std::string metadata_json(const std::string& name = "ego_metadata") const;

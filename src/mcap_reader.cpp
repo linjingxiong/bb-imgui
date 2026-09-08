@@ -189,6 +189,20 @@ std::set<std::string> McapReader::topics_with_messages() const {
     return result;
 }
 
+std::map<std::string, uint64_t> McapReader::message_totals() const {
+    std::map<std::string, uint64_t> result;
+    if (!impl_->is_open) return result;
+    const auto& stats = impl_->reader.statistics();
+    if (!stats) return result;
+    for (const auto& [channel_id, channel_ptr] : impl_->reader.channels()) {
+        if (!channel_ptr) continue;
+        auto it = stats->channelMessageCounts.find(channel_id);
+        if (it != stats->channelMessageCounts.end())
+            result[channel_ptr->topic] += it->second;
+    }
+    return result;
+}
+
 uint64_t McapReader::seekable_start_time_us(uint64_t target_us) const {
     if (!impl_->is_open) return 0;
     const mcap::Timestamp target_ns = static_cast<mcap::Timestamp>(target_us) * 1000ULL;

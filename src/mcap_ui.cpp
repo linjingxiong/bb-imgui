@@ -50,7 +50,6 @@ struct View {
 std::map<std::string, View> g_view;
 std::string g_focus_topic; // panel expanded to fill the stage (temporary)
 std::string g_featured;    // spotlight-layout main video
-bool g_abs_time = true;    // transport: show wall-clock timestamp vs M:SS elapsed
 
 // The one video panel (if any) currently showing the sensor inset, and which
 // tab (0 = accel, 1 = gyro, 2 = audio). Only one at a time. Reset on open.
@@ -67,7 +66,7 @@ void rotate_all() {
 
 // Layout metrics. The right panel width is user-draggable.
 constexpr float RAIL_W = 48.0f;
-constexpr float TRANSPORT_H = 58.0f;
+constexpr float TRANSPORT_H = 44.0f;
 constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = 324.0f;
@@ -771,11 +770,15 @@ void display(ImVec2 pos, ImVec2 size) {
 
     const float GAP = 6.0f;
     const float HEAD = 32.0f; // must match video_panel's header
+    // An equal margin around the video area, inset from the stage edges.
+    const float PAD = 14.0f;
+    const ImVec2 ipos(std::floor(pos.x + PAD), std::floor(pos.y + PAD));
+    const ImVec2 isize(std::floor(size.x - 2.0f * PAD), std::floor(size.y - 2.0f * PAD));
 
-    // Centre a single panel, sized to the video aspect, in the whole stage.
+    // Centre a single panel, sized to the video aspect, in the video area.
     auto one = [&](const std::string& topic) {
-        ImVec2 ps = fit_panel(size.x, size.y, video_ar(topic), HEAD);
-        ImVec2 pp(pos.x + (size.x - ps.x) * 0.5f, pos.y + (size.y - ps.y) * 0.5f);
+        ImVec2 ps = fit_panel(isize.x, isize.y, video_ar(topic), HEAD);
+        ImVec2 pp(ipos.x + (isize.x - ps.x) * 0.5f, ipos.y + (isize.y - ps.y) * 0.5f);
         video_panel(topic, snap(pp), ps);
     };
 
@@ -803,15 +806,15 @@ void display(ImVec2 pos, ImVec2 size) {
             g_featured = vts[0];
 
         const float STRIP_W = 200.0f;
-        float feat_w = std::floor(size.x - STRIP_W - GAP);
-        ImVec2 fs = fit_panel(feat_w, size.y, video_ar(g_featured), HEAD);
-        ImVec2 fp(pos.x + (feat_w - fs.x) * 0.5f, pos.y + (size.y - fs.y) * 0.5f);
+        float feat_w = std::floor(isize.x - STRIP_W - GAP);
+        ImVec2 fs = fit_panel(feat_w, isize.y, video_ar(g_featured), HEAD);
+        ImVec2 fp(ipos.x + (feat_w - fs.x) * 0.5f, ipos.y + (isize.y - fs.y) * 0.5f);
         video_panel(g_featured, snap(fp), fs);
 
-        ImVec2 sp(std::floor(pos.x + feat_w + GAP), pos.y);
+        ImVec2 sp(std::floor(ipos.x + feat_w + GAP), ipos.y);
         ImGui::SetCursorScreenPos(sp);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, u32(p.deep));
-        ImGui::BeginChild("##strip", ImVec2(STRIP_W, size.y), ImGuiChildFlags_None);
+        ImGui::BeginChild("##strip", ImVec2(STRIP_W, isize.y), ImGuiChildFlags_None);
         float tw = ImGui::GetContentRegionAvail().x;
         float thumb_h = std::floor(tw * 0.66f + 27.0f);
         for (const auto& t : vts) {
@@ -839,16 +842,16 @@ void display(ImVec2 pos, ImVec2 size) {
     // ── Grid: 2 columns, a lone last cell centred; panels sized to the video
     //    aspect and the whole block centred in the stage (no letterbox band). ──
     int rows = (n + 1) / 2;
-    float cw = std::floor((size.x - GAP) / 2.0f);
-    float ch = std::floor((size.y - GAP * (rows - 1)) / rows);
+    float cw = std::floor((isize.x - GAP) / 2.0f);
+    float ch = std::floor((isize.y - GAP * (rows - 1)) / rows);
     ImVec2 ps = fit_panel(cw, ch, video_ar(vts[0]), HEAD);
     float block_h = rows * ps.y + GAP * (rows - 1);
-    float y0 = pos.y + std::floor((size.y - block_h) * 0.5f);
-    float x0 = pos.x + std::floor((size.x - (2.0f * ps.x + GAP)) * 0.5f);
+    float y0 = ipos.y + std::floor((isize.y - block_h) * 0.5f);
+    float x0 = ipos.x + std::floor((isize.x - (2.0f * ps.x + GAP)) * 0.5f);
     for (int i = 0; i < n; ++i) {
         int gy = i / 2, gx = i % 2;
         int in_row = (gy == rows - 1) ? (n - gy * 2) : 2;
-        float px = (in_row == 1) ? (pos.x + std::floor((size.x - ps.x) * 0.5f))
+        float px = (in_row == 1) ? (ipos.x + std::floor((isize.x - ps.x) * 0.5f))
                                  : (x0 + gx * (ps.x + GAP));
         video_panel(vts[i], snap(ImVec2(px, y0 + gy * (ps.y + GAP))), ps);
     }
@@ -880,163 +883,64 @@ void transport(ImVec2 pos, ImVec2 size) {
         span = e > s ? e - s : 1;
         cur = std::clamp<uint64_t>(g_pb->current_time_us(), s, s + span);
     }
-    float frac = std::clamp((float)(cur - s) / (float)span, 0.0f, 1.0f);
+    float frac = std::clamp((float)((double)(cur - s) / (double)span), 0.0f, 1.0f);
     const bool playing = ready && g_pb->playing();
     const bool ended = ready && !playing && g_pb->current_time_us() + 40'000 >= s + span;
 
-    ImU32 c_dim = u32(ImVec4(p.text.x, p.text.y, p.text.z, 0.85f));
-    ImU32 c_lit = u32(p.light);
+    const ImU32 c_dim = u32(fade(p.text, 0.85f));
+    const ImU32 c_lit = u32(p.light);
+    const float cy = std::floor(pos.y + size.y * 0.5f);
 
-    // ── Scrubber — a thin grey track spanning the full width ────────────
-    const float trk_cy = std::floor(pos.y + 8.0f);
-    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y));
-    ImGui::InvisibleButton("##scrub", ImVec2(size.x, 16.0f));
-    bool scrub_active = ImGui::IsItemActive();
-    if (ImGui::IsItemHovered() || scrub_active) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    if (scrub_active && ready) {
-        float rel = std::clamp((ImGui::GetIO().MousePos.x - pos.x) / size.x, 0.0f, 1.0f);
-        g_pb->seek(s + (uint64_t)(rel * span));
-    }
-    const float hh = 3.0f; // fixed — a hover-driven change makes the track jitter
-    float px = std::floor(pos.x + size.x * frac);
-    dl->AddRectFilled(ImVec2(pos.x, trk_cy - hh), ImVec2(pos.x + size.x, trk_cy + hh),
-                      u32(mix(p.ui, p.deep, 0.5f)));
-    if (ready && px > pos.x)
-        dl->AddRectFilled(ImVec2(pos.x, trk_cy - hh), ImVec2(px, trk_cy + hh), u32(p.accent));
-    if (ready) {
-        // The bubble + enlarged bar show only while the pointer is on the
-        // playhead itself (or dragging it), not anywhere on the track.
-        ImVec2 m = ImGui::GetIO().MousePos;
-        bool head = (m.x >= px - 7.0f && m.x <= px + 7.0f && m.y >= pos.y && m.y <= pos.y + 16.0f);
-        bool shov = head || scrub_active;
-
-        float bw = shov ? 4.0f : 3.0f, bhh = shov ? 9.0f : 7.0f;
-        dl->AddRectFilled(ImVec2(px - bw * 0.5f, trk_cy - bhh), ImVec2(px + bw * 0.5f, trk_cy + bhh),
-                          c_lit, 1.0f);
-
-        // Time bubble above the playhead (on the foreground list so it can
-        // sit above the transport, over the video).
-        if (shov) {
-            char hb[24];
-            if (g_abs_time) {
-                std::time_t tt = (std::time_t)(cur / 1'000'000);
-                unsigned ms = (unsigned)((cur / 1000) % 1000);
-                std::tm tv{};
-#if defined(_WIN32)
-                localtime_s(&tv, &tt);
-#else
-                localtime_r(&tt, &tv);
-#endif
-                char hh2[16];
-                std::strftime(hh2, sizeof(hh2), "%H:%M:%S", &tv);
-                std::snprintf(hb, sizeof(hb), "%s.%03u", hh2, ms);
-            } else {
-                uint64_t el = cur - s, sec = el / 1'000'000, ms = (el / 1000) % 1000;
-                std::snprintf(hb, sizeof(hb), "%llu:%02llu.%03llu", (unsigned long long)(sec / 60),
-                              (unsigned long long)(sec % 60), (unsigned long long)ms);
-            }
-            ImDrawList* fg = ImGui::GetForegroundDrawList();
-            ImGui::PushFont(nullptr, theme::size::SMALL);
-            ImVec2 ts = ImGui::CalcTextSize(hb);
-            float bx = std::clamp(px, pos.x + ts.x * 0.5f + 8.0f,
-                                  pos.x + size.x - ts.x * 0.5f - 8.0f);
-            float bot = pos.y - 3.0f, top = bot - ts.y - 8.0f;
-            ImVec2 q0(std::floor(bx - ts.x * 0.5f - 7.0f), std::floor(top));
-            ImVec2 q1(std::floor(bx + ts.x * 0.5f + 7.0f), std::floor(bot));
-            fg->AddRectFilled(q0, q1, u32(p.bright_ui), 3.0f);
-            fg->AddTriangleFilled(ImVec2(px - 4.0f, bot - 0.5f), ImVec2(px + 4.0f, bot - 0.5f),
-                                  ImVec2(px, bot + 4.0f), u32(p.bright_ui));
-            fg->AddText(snap(ImVec2(bx - ts.x * 0.5f, top + 3.0f)), u32(p.bright_ui_text), hb);
-            ImGui::PopFont();
-        }
-    }
-
-    // ── Controls row ───────────────────────────────────────────────────
-    const float row_y = pos.y + 37.0f;
+    // mm:ss.cc of a microsecond duration.
+    auto fmt_time = [](char* out, size_t n, uint64_t us) {
+        uint64_t sec = us / 1'000'000, cs = (us / 10'000) % 100;
+        std::snprintf(out, n, "%llu:%02llu.%02llu", (unsigned long long)(sec / 60),
+                      (unsigned long long)(sec % 60), (unsigned long long)cs);
+    };
 
     auto ico_btn = [&](const char* id, const char* icon, const char* tip, float glyph, bool lit,
-                       ImVec2 c, float box = 26.0f) -> bool {
+                       float bx, float box) -> bool {
         ImVec2 bs(box, box);
-        ImVec2 bp = snap(ImVec2(c.x - bs.x * 0.5f, c.y - bs.y * 0.5f));
+        ImVec2 bp = snap(ImVec2(bx, cy - box * 0.5f));
         ImGui::PushID(id);
         ImGui::SetCursorScreenPos(bp);
         ImGui::InvisibleButton("b", bs);
-        bool hov = ImGui::IsItemHovered();
-        bool clk = ImGui::IsItemClicked();
+        bool hov = ImGui::IsItemHovered(), clk = ImGui::IsItemClicked();
         ImGui::PopID();
         if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); if (tip) tooltip(tip); }
-        icon_centered(dl, icon, bp, bp + bs, glyph,
-                      lit ? u32(p.accent) : (hov ? c_lit : c_dim));
+        icon_centered(dl, icon, bp, bp + bs, glyph, lit ? u32(p.accent) : (hov ? c_lit : c_dim));
         return clk;
     };
 
-    // Left: info toggle + timestamp.
-    if (ico_btn("info", ICON_INFO, g_abs_time ? "Show elapsed time" : "Show wall-clock time", 19.0f,
-                false, ImVec2(pos.x + 20.0f, row_y)))
-        g_abs_time = !g_abs_time;
+    // ── Left: controls ─────────────────────────────────────────────────
+    float x = pos.x + 12.0f;
 
-    char stamp[48];
-    if (!ready) {
-        std::snprintf(stamp, sizeof(stamp), "--");
-    } else if (g_abs_time) {
-        std::time_t tt = (std::time_t)(cur / 1'000'000);
-        unsigned ms = (unsigned)((cur / 1000) % 1000);
-        std::tm tmv{};
-#if defined(_WIN32)
-        localtime_s(&tmv, &tt);
-#else
-        localtime_r(&tt, &tmv);
-#endif
-        char base[32];
-        std::strftime(base, sizeof(base), "%Y-%m-%d  %H:%M:%S", &tmv);
-        std::snprintf(stamp, sizeof(stamp), "%s.%03u", base, ms);
-    } else {
-        uint64_t el = (cur - s) / 1'000'000, to = span / 1'000'000;
-        std::snprintf(stamp, sizeof(stamp), "%llu:%02llu / %llu:%02llu",
-                      (unsigned long long)(el / 60), (unsigned long long)(el % 60),
-                      (unsigned long long)(to / 60), (unsigned long long)(to % 60));
-    }
-    ImGui::PushFont(nullptr, theme::size::SMALL);
-    float th = ImGui::GetTextLineHeight();
-    dl->AddText(snap(ImVec2(pos.x + 38.0f, row_y - th * 0.5f)), u32(p.text), stamp);
-    ImGui::PopFont();
-
-    // Centre: skip-start / play / skip-end — the play button is the anchor.
-    float mid = pos.x + size.x * 0.5f;
-    if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 24.0f, false,
-                ImVec2(mid - 46.0f, row_y), 30.0f) && ready)
-        g_pb->seek(s);
-    if (ico_btn("play", ended ? ICON_REPLAY : playing ? ICON_PAUSE : ICON_PLAY,
-                ended ? "Replay" : playing ? "Pause" : "Play", ended ? 30.0f : 34.0f, false,
-                ImVec2(mid, row_y), 42.0f) &&
-        ready) {
-        if (ended) { g_pb->seek(s); g_pb->play(); }
-        else g_pb->toggle();
-    }
-    if (ico_btn("last", ICON_SKIP_NEXT, "Jump to end", 24.0f, false,
-                ImVec2(mid + 46.0f, row_y), 30.0f) && ready)
-        g_pb->seek(s + span);
-
-    // Right: loop toggle + speed menu.
-    float right = pos.x + size.x - 12.0f;
     {
+        bool on = settings::get().loop_at_end;
+        if (ico_btn("loop", ICON_REPEAT, on ? "Loop: on" : "Loop: off", 18.0f, on, x, 22.0f)) {
+            settings::get().loop_at_end = !on;
+            settings::save();
+        }
+        x += 22.0f + 6.0f;
+    }
+
+    { // speed pill
         static const float SPEEDS[] = {0.5f, 1.0f, 2.0f, 4.0f};
         char sp[8];
         std::snprintf(sp, sizeof(sp), "%gx", ready ? g_pb->speed() : 1.0f);
         ImGui::PushFont(nullptr, theme::size::SMALL);
-        float sw = ImGui::CalcTextSize(sp).x;
-        float chev = 16.0f;
-        float w = sw + chev + 8.0f;
-        ImVec2 bp(right - w, row_y - 12.0f);
+        float sw = ImGui::CalcTextSize(sp).x, w = sw + 18.0f;
+        ImVec2 bp(std::floor(x), cy - 11.0f);
         ImGui::SetCursorScreenPos(bp);
         ImGui::PushID("spd");
-        ImGui::InvisibleButton("b", ImVec2(w, 24.0f));
+        ImGui::InvisibleButton("b", ImVec2(w, 22.0f));
         bool hov = ImGui::IsItemHovered();
         if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         if (ImGui::IsItemClicked()) ImGui::OpenPopup("m");
-        dl->AddText(snap(ImVec2(bp.x, row_y - th * 0.5f)), hov ? c_lit : u32(p.text), sp);
-        icon_centered(dl, ICON_CARET_DOWN, ImVec2(bp.x + sw + 2.0f, bp.y),
-                      ImVec2(bp.x + sw + 2.0f + chev, bp.y + 24.0f), 16.0f, u32(p.subtle_text));
+        float lh = ImGui::GetTextLineHeight();
+        dl->AddText(snap(ImVec2(bp.x, cy - lh * 0.5f)), hov ? c_lit : u32(p.text), sp);
+        icon_centered(dl, ICON_CARET_DOWN, ImVec2(bp.x + sw + 1.0f, bp.y),
+                      ImVec2(bp.x + sw + 15.0f, bp.y + 22.0f), 14.0f, u32(p.subtle_text));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, u32(p.ui));
         ImGui::PushStyleColor(ImGuiCol_Border, u32(p.border));
         if (ImGui::BeginPopup("m")) {
@@ -1050,14 +954,112 @@ void transport(ImVec2 pos, ImVec2 size) {
         ImGui::PopStyleColor(2);
         ImGui::PopID();
         ImGui::PopFont();
-        right = bp.x - 10.0f;
+        x = bp.x + w + 6.0f;
     }
+
+    if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 20.0f, false, x, 22.0f) && ready)
+        g_pb->seek(s);
+    x += 22.0f + 2.0f;
+
+    { // play — a filled circle, bigger than the skips
+        const float R = 15.0f;
+        float ccx = std::floor(x + R), ccy = cy;
+        ImVec2 bp = snap(ImVec2(ccx - R, ccy - R));
+        ImGui::PushID("play");
+        ImGui::SetCursorScreenPos(bp);
+        ImGui::InvisibleButton("b", ImVec2(R * 2.0f, R * 2.0f));
+        bool hov = ImGui::IsItemHovered(), clk = ImGui::IsItemClicked();
+        ImGui::PopID();
+        if (hov) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            tooltip(ended ? "Replay" : playing ? "Pause" : "Play");
+        }
+        dl->AddCircleFilled(ImVec2(ccx, ccy), R, u32(hov ? p.light : mix(p.light, p.ui, 0.14f)));
+        icon_centered(dl, ended ? ICON_REPLAY : playing ? ICON_PAUSE : ICON_PLAY, bp,
+                      bp + ImVec2(R * 2.0f, R * 2.0f), ended ? 18.0f : 20.0f, u32(p.frame));
+        if (clk && ready) {
+            if (ended) { g_pb->seek(s); g_pb->play(); }
+            else g_pb->toggle();
+        }
+        x = ccx + R + 2.0f;
+    }
+
+    if (ico_btn("last", ICON_SKIP_NEXT, "Jump to end", 20.0f, false, x, 22.0f) && ready)
+        g_pb->seek(s + span);
+    x += 22.0f + 14.0f;
+
+    // ── time: elapsed (bright) / total (dim) ───────────────────────────
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    float lh = ImGui::GetTextLineHeight();
+    float ty = std::floor(cy - lh * 0.5f);
     {
-        bool on = settings::get().loop_at_end;
-        if (ico_btn("loop", ICON_REPEAT, on ? "Loop: on" : "Loop: off", 19.0f, on,
-                    ImVec2(right - 13.0f, row_y))) {
-            settings::get().loop_at_end = !on;
-            settings::save();
+        char a[20] = "--", b[20] = "--";
+        if (ready) { fmt_time(a, sizeof(a), cur - s); fmt_time(b, sizeof(b), span); }
+        char head[24];
+        std::snprintf(head, sizeof(head), "%s / ", a);
+        dl->AddText(snap(ImVec2(x, ty)), u32(p.text), head);
+        float hw = ImGui::CalcTextSize(head).x;
+        dl->AddText(snap(ImVec2(x + hw, ty)), u32(p.subtle_text), b);
+        char full[48];
+        std::snprintf(full, sizeof(full), "%s%s", head, b);
+        x += ImGui::CalcTextSize(full).x + 16.0f;
+    }
+
+    // ── frame counter, right-aligned ──────────────────────────────────
+    float scrub_x1 = pos.x + size.x - 12.0f;
+    if (ready && !g_pb->video_topics().empty()) {
+        uint64_t total = g_pb->total_message_count(g_pb->video_topics()[0]);
+        if (total > 0) {
+            uint64_t curf = (uint64_t)(frac * (double)total + 0.5);
+            char cf[16], tf[16];
+            std::snprintf(cf, sizeof(cf), "%llu ", (unsigned long long)curf);
+            std::snprintf(tf, sizeof(tf), "/ %llu", (unsigned long long)total);
+            float cfw = ImGui::CalcTextSize(cf).x, tfw = ImGui::CalcTextSize(tf).x;
+            float fx = pos.x + size.x - 12.0f - cfw - tfw;
+            dl->AddText(snap(ImVec2(fx, ty)), u32(p.text), cf);
+            dl->AddText(snap(ImVec2(fx + cfw, ty)), u32(p.subtle_text), tf);
+            scrub_x1 = fx - 14.0f;
+        }
+    }
+    ImGui::PopFont();
+
+    // ── Scrubber — fills the space between the time and the frame count ──
+    float scrub_x0 = x;
+    if (scrub_x1 < scrub_x0 + 40.0f) scrub_x1 = scrub_x0 + 40.0f;
+    float sw2 = scrub_x1 - scrub_x0;
+    ImGui::SetCursorScreenPos(ImVec2(scrub_x0, cy - 8.0f));
+    ImGui::InvisibleButton("##scrub", ImVec2(sw2, 16.0f));
+    bool scrub_active = ImGui::IsItemActive();
+    if (ImGui::IsItemHovered() || scrub_active) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (scrub_active && ready) {
+        float rel = std::clamp((ImGui::GetIO().MousePos.x - scrub_x0) / sw2, 0.0f, 1.0f);
+        g_pb->seek(s + (uint64_t)(rel * span));
+    }
+    float px = std::floor(scrub_x0 + sw2 * frac);
+    dl->AddRectFilled(ImVec2(scrub_x0, cy - 2.0f), ImVec2(scrub_x1, cy + 2.0f),
+                      u32(mix(p.ui, p.deep, 0.5f)), 2.0f);
+    if (ready && px > scrub_x0)
+        dl->AddRectFilled(ImVec2(scrub_x0, cy - 2.0f), ImVec2(px, cy + 2.0f), u32(p.accent), 2.0f);
+    if (ready) {
+        ImVec2 m = ImGui::GetIO().MousePos;
+        bool head = m.x >= px - 8.0f && m.x <= px + 8.0f && m.y >= cy - 9.0f && m.y <= cy + 9.0f;
+        bool shov = head || scrub_active;
+        dl->AddCircleFilled(ImVec2(px, cy), shov ? 6.5f : 5.0f, c_lit);
+        if (shov) {
+            char hb[20];
+            fmt_time(hb, sizeof(hb), cur - s);
+            ImDrawList* fg = ImGui::GetForegroundDrawList();
+            ImGui::PushFont(nullptr, theme::size::SMALL);
+            ImVec2 ts = ImGui::CalcTextSize(hb);
+            float bx = std::clamp(px, scrub_x0 + ts.x * 0.5f + 8.0f, scrub_x1 - ts.x * 0.5f - 8.0f);
+            float bot = pos.y - 3.0f, top = bot - ts.y - 8.0f;
+            ImVec2 q0(std::floor(bx - ts.x * 0.5f - 7.0f), std::floor(top));
+            ImVec2 q1(std::floor(bx + ts.x * 0.5f + 7.0f), std::floor(bot));
+            fg->AddRectFilled(q0, q1, u32(p.bright_ui), 3.0f);
+            fg->AddTriangleFilled(ImVec2(px - 4.0f, bot - 0.5f), ImVec2(px + 4.0f, bot - 0.5f),
+                                  ImVec2(px, bot + 4.0f), u32(p.bright_ui));
+            fg->AddText(snap(ImVec2(bx - ts.x * 0.5f, top + 3.0f)), u32(p.bright_ui_text), hb);
+            ImGui::PopFont();
         }
     }
 

@@ -25,6 +25,7 @@ bool Playback::open(const std::string& path) {
     auto topic_set = reader_.topics_with_messages();
     topics_.assign(topic_set.begin(), topic_set.end());
     std::sort(topics_.begin(), topics_.end());
+    msg_totals_ = reader_.message_totals();
     video_topics_.clear();
     for (const auto& t : topics_)
         if (is_video_topic(t)) video_topics_.push_back(t);
@@ -63,6 +64,7 @@ void Playback::close() {
     std::lock_guard<std::mutex> lk(frames_mutex_);
     latest_frames_.clear();
     msg_counts_.clear();
+    msg_totals_.clear();
     imu_hist_.clear();
     audio_hist_.clear();
     has_audio_ = false;
@@ -157,6 +159,11 @@ uint64_t Playback::message_count(const std::string& topic) {
     std::lock_guard<std::mutex> lk(frames_mutex_);
     auto it = msg_counts_.find(topic);
     return it == msg_counts_.end() ? 0 : it->second;
+}
+
+uint64_t Playback::total_message_count(const std::string& topic) const {
+    auto it = msg_totals_.find(topic);
+    return it == msg_totals_.end() ? 0 : it->second;
 }
 
 std::vector<Playback::ImuSample> Playback::imu_history(const std::string& topic) {

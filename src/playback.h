@@ -59,6 +59,9 @@ public:
     // A per-topic running total of how many messages have been dispatched
     // (cheap "activity" indicator for the topic tree).
     uint64_t message_count(const std::string& topic);
+    // Total messages on `topic` in the whole file (from the summary; 0 if
+    // unknown).
+    uint64_t total_message_count(const std::string& topic) const;
 
     // One IMU sample (accel or gyro), in the file's own units.
     struct ImuSample { uint64_t t_us; double x, y, z; };
@@ -97,6 +100,7 @@ private:
     std::mutex frames_mutex_;
     std::map<std::string, VideoFramePtr> latest_frames_;
     std::map<std::string, uint64_t> msg_counts_;
+    std::map<std::string, uint64_t> msg_totals_; // from the file summary
     std::map<std::string, std::deque<ImuSample>> imu_hist_;
     std::deque<AudioPoint> audio_hist_;
     bool has_audio_ = false;
