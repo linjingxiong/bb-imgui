@@ -280,9 +280,11 @@ void Playback::do_seek_catchup(uint64_t target_us) {
     // The tail pass reads a little PAST the target too: the frame to display
     // for a seek is "the one at or just after target". For target == file
     // start (or a sparse stream) there's nothing before it, so without this
-    // the panels stay blank until the first play.
+    // the panels stay blank until the first play. Keep this small — a large
+    // margin decodes+shows dozens of frames past the target ("plays forward
+    // after a scrub").
     const uint64_t tail_us = 500'000;
-    const uint64_t tail_fwd_us = 2'000'000;
+    const uint64_t tail_fwd_us = 120'000;
     const uint64_t warm_end = target_us > from_us + tail_us ? target_us - tail_us : from_us;
 
     if (warm_end > from_us) {
