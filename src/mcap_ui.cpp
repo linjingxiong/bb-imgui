@@ -248,9 +248,10 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
 
     const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
     static const char* nm[3] = {"x", "y", "z"};
-    const float y_label_w = 30.0f;
+    const float y_label_w = 24.0f;
+    const float leg_h = inline_legend ? 15.0f : 0.0f; // bottom strip for the x/y/z row
     ImVec2 c0(amin.x + y_label_w, amin.y + 4.0f);
-    ImVec2 c1(amax.x, amax.y - 4.0f);
+    ImVec2 c1(amax.x, amax.y - 4.0f - leg_h);
     dl->AddRectFilled(c0, c1, bg);
 
     const ImU32 grid = u32(p.grid);
@@ -268,7 +269,8 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
         char lbl[16];
         std::snprintf(lbl, sizeof(lbl), "%.*f", dec, f * scale);
         ImVec2 ts = ImGui::CalcTextSize(lbl);
-        dl->AddText(ImVec2(amin.x + y_label_w - 4 - ts.x, gy - ts.y * 0.5f), u32(p.subtle_text), lbl);
+        // Left-aligned flush with the chart's left edge (labels line up vertically).
+        dl->AddText(ImVec2(amin.x, gy - ts.y * 0.5f), u32(p.subtle_text), lbl);
     }
     ImGui::PopFont();
 
@@ -315,17 +317,18 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
     dl->AddLine(ImVec2(hx, c0.y), ImVec2(hx, c1.y), u32(fade(p.light, 0.55f)), 1.0f);
     dl->PopClipRect();
 
-    // x/y/z readout, stacked in the chart's bottom-left corner: a small square
-    // in the axis colour + the letter and value in neutral text.
+    // x/y/z readout as one horizontal row in the strip below the plot: a small
+    // square in the axis colour + the letter and value in neutral text.
     if (inline_legend) {
         ImGui::PushFont(nullptr, theme::size::CAPTION);
-        float ly = c1.y - 4.0f - 14.0f * 3;
+        float rowy = c1.y + 3.0f;
+        float cw = (amax.x - c0.x) / 3.0f;
         for (int a = 0; a < 3; ++a) {
-            dl->AddRectFilled(ImVec2(c0.x + 1, ly + 3), ImVec2(c0.x + 7, ly + 9), u32(acol[a]));
+            float sx = c0.x + cw * a + 2.0f;
+            dl->AddRectFilled(ImVec2(sx, rowy + 3), ImVec2(sx + 6, rowy + 9), u32(acol[a]));
             char t[40];
-            std::snprintf(t, sizeof(t), "%s  % .*f", nm[a], scale >= 10 ? 2 : 3, lv[a]);
-            dl->AddText(ImVec2(c0.x + 11, ly), u32(p.text), t);
-            ly += 14.0f;
+            std::snprintf(t, sizeof(t), "%s % .*f", nm[a], scale >= 10 ? 2 : 3, lv[a]);
+            dl->AddText(ImVec2(sx + 10, rowy), u32(p.text), t);
         }
         ImGui::PopFont();
     }
