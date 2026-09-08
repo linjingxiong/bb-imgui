@@ -841,19 +841,20 @@ void display(ImVec2 pos, ImVec2 size) {
 
     // ── Grid: 2 columns, a lone last cell centred; panels sized to the video
     //    aspect and the whole block centred in the stage (no letterbox band). ──
+    // The gap between panels matches the margin around the video area (PAD).
     int rows = (n + 1) / 2;
-    float cw = std::floor((isize.x - GAP) / 2.0f);
-    float ch = std::floor((isize.y - GAP * (rows - 1)) / rows);
+    float cw = std::floor((isize.x - PAD) / 2.0f);
+    float ch = std::floor((isize.y - PAD * (rows - 1)) / rows);
     ImVec2 ps = fit_panel(cw, ch, video_ar(vts[0]), HEAD);
-    float block_h = rows * ps.y + GAP * (rows - 1);
+    float block_h = rows * ps.y + PAD * (rows - 1);
     float y0 = ipos.y + std::floor((isize.y - block_h) * 0.5f);
-    float x0 = ipos.x + std::floor((isize.x - (2.0f * ps.x + GAP)) * 0.5f);
+    float x0 = ipos.x + std::floor((isize.x - (2.0f * ps.x + PAD)) * 0.5f);
     for (int i = 0; i < n; ++i) {
         int gy = i / 2, gx = i % 2;
         int in_row = (gy == rows - 1) ? (n - gy * 2) : 2;
         float px = (in_row == 1) ? (ipos.x + std::floor((isize.x - ps.x) * 0.5f))
-                                 : (x0 + gx * (ps.x + GAP));
-        video_panel(vts[i], snap(ImVec2(px, y0 + gy * (ps.y + GAP))), ps);
+                                 : (x0 + gx * (ps.x + PAD));
+        video_panel(vts[i], snap(ImVec2(px, y0 + gy * (ps.y + PAD))), ps);
     }
 
     ImGui::EndChild();
