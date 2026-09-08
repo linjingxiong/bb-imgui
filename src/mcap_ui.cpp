@@ -975,7 +975,7 @@ void transport(ImVec2 pos, ImVec2 size) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             tooltip(ended ? "Replay" : playing ? "Pause" : "Play");
         }
-        dl->AddCircleFilled(ImVec2(ccx, ccy), R, u32(hov ? p.light : mix(p.light, p.ui, 0.14f)));
+        dl->AddCircleFilled(ImVec2(ccx, ccy), R, u32(hov ? p.light : mix(p.light, p.ui, 0.14f)), 64);
         icon_centered(dl, ended ? ICON_REPLAY : playing ? ICON_PAUSE : ICON_PLAY, bp,
                       bp + ImVec2(R * 2.0f, R * 2.0f), ended ? 18.0f : 20.0f, u32(p.frame));
         if (clk && ready) {
