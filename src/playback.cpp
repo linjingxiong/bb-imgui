@@ -32,6 +32,8 @@ bool Playback::open(const std::string& path) {
     for (const auto& t : video_topics_)
         decoders_[t] = std::make_unique<VideoDecoder>();
 
+    preload_history();
+
     current_time_us_.store(reader_.start_time_us());
     {
         std::lock_guard<std::mutex> lk(clock_mutex_);
@@ -57,6 +59,7 @@ void Playback::close() {
     path_.clear();
     topics_.clear();
     video_topics_.clear();
+    history_preloaded_.store(false);
     std::lock_guard<std::mutex> lk(frames_mutex_);
     latest_frames_.clear();
     msg_counts_.clear();
@@ -64,6 +67,22 @@ void Playback::close() {
     audio_hist_.clear();
     has_audio_ = false;
     latest_summary_.clear();
+}
+
+void Playback::preload_history() {
+    history_preloaded_.store(false);
+    reader_.read_messages(reader_.start_time_us(), 0, [&](const McapMessage& m) -> bool {
+        if (should_stop_.load()) return false;
+        if (is_imu_topic(m.topic) || m.topic == "/audio") dispatch(m);
+        return true;
+    });
+    // dispatch() also bumps msg_counts_; the preload scan isn't playback, so
+    // reset them and let the playback thread re-accumulate as it actually runs.
+    {
+        std::lock_guard<std::mutex> lk(frames_mutex_);
+        msg_counts_.clear();
+    }
+    history_preloaded_.store(true);
 }
 
 void Playback::stop_thread() {
@@ -182,10 +201,12 @@ void Playback::dispatch(const McapMessage& msg) {
         char buf[96];
         std::snprintf(buf, sizeof(buf), "x %.4f   y %.4f   z %.4f", s.x, s.y, s.z);
         std::lock_guard<std::mutex> lk(frames_mutex_);
-        auto& dq = imu_hist_[msg.topic];
-        dq.push_back({s.timestamp_us ? s.timestamp_us : msg.timestamp_us, s.x, s.y, s.z});
-        while (dq.size() > kImuHistCap) dq.pop_front();
         latest_summary_[msg.topic] = buf;
+        if (!history_preloaded_.load()) {
+            auto& dq = imu_hist_[msg.topic];
+            dq.push_back({s.timestamp_us ? s.timestamp_us : msg.timestamp_us, s.x, s.y, s.z});
+            while (dq.size() > kImuHistCap) dq.pop_front();
+        }
         return;
     }
 
@@ -204,18 +225,20 @@ void Playback::dispatch(const McapMessage& msg) {
         std::lock_guard<std::mutex> lk(frames_mutex_);
         latest_summary_[msg.topic] = buf;
         has_audio_ = true;
-        uint32_t sr = a.sample_rate ? a.sample_rate : 16000;
-        for (int b = 0; b < buckets && frames > 0; ++b) {
-            size_t f0 = frames * b / buckets, f1 = frames * (b + 1) / buckets;
-            float peak = 0;
-            for (size_t f = f0; f < f1; ++f) {
-                float v = s[f * ch] / 32768.0f;
-                peak = std::max(peak, v < 0 ? -v : v);
+        if (!history_preloaded_.load()) {
+            uint32_t sr = a.sample_rate ? a.sample_rate : 16000;
+            for (int b = 0; b < buckets && frames > 0; ++b) {
+                size_t f0 = frames * b / buckets, f1 = frames * (b + 1) / buckets;
+                float peak = 0;
+                for (size_t f = f0; f < f1; ++f) {
+                    float v = s[f * ch] / 32768.0f;
+                    peak = std::max(peak, v < 0 ? -v : v);
+                }
+                uint64_t t = msg.timestamp_us + (uint64_t)((double)f0 / sr * 1e6);
+                audio_hist_.push_back({t, peak});
             }
-            uint64_t t = msg.timestamp_us + (uint64_t)((double)f0 / sr * 1e6);
-            audio_hist_.push_back({t, peak});
+            while (audio_hist_.size() > kAudioHistCap) audio_hist_.pop_front();
         }
-        while (audio_hist_.size() > kAudioHistCap) audio_hist_.pop_front();
         return;
     }
 
@@ -252,9 +275,10 @@ void Playback::dispatch(const McapMessage& msg) {
 
 void Playback::do_seek_catchup(uint64_t target_us) {
     for (auto& [_, d] : decoders_) d->reset();
-    {
+    if (!history_preloaded_.load()) {
         // Rebuild IMU history cleanly for the window around the new position
         // (a backward seek would otherwise leave stale future samples).
+        // When the whole track is preloaded it's immutable — leave it alone.
         std::lock_guard<std::mutex> lk(frames_mutex_);
         imu_hist_.clear();
         audio_hist_.clear();

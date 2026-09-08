@@ -217,35 +217,33 @@ void rail(ImVec2 pos, ImVec2 size) {
 ImVec4 fade(const ImVec4& c, float a) { return ImVec4(c.x, c.y, c.z, a); }
 
 // ── Shared sensor charts (right panel + video-panel inset use the same) ──
-// One IMU x/y/z chart into [amin, amax] (5s window, RAW values, adaptive
-// symmetric Y scale, faint grid, Y labels, optional inside legend).
+// One IMU x/y/z chart into [amin, amax]. Foxglove recorded-playback style:
+// the whole recording is the X axis, the full trace is drawn once, and a
+// vertical playhead sweeps across it. RAW values, adaptive symmetric Y scale,
+// faint grid, Y labels, a Blockbench Transform-field style x/y/z readout row
+// (values at the playhead) when inline_legend is set.
 void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topic,
                bool inline_legend, ImU32 bg) {
     const theme::Palette& p = theme::palette();
     auto hist = g_pb->imu_history(topic);
-    auto latest = g_pb->imu_latest(topic);
 
-    // Anchor the X-axis right edge to the newest real sample, not the free-
-    // running playback clock (which runs ahead of the dispatch thread when
-    // decode is heavy, leaving dead air on the right). Only clamp downward.
-    uint64_t now = g_pb->current_time_us();
-    if (!hist.empty() && hist.back().t_us < now) now = hist.back().t_us;
-    // 5s rolling window, but shrink to the data span while there's less than
-    // that (just after open / seek) so the trace fills the whole width.
-    uint64_t window_us = 5'000'000;
-    if (!hist.empty()) {
-        uint64_t span = now > hist.front().t_us ? now - hist.front().t_us : 0;
-        window_us = std::clamp<uint64_t>(span, 1'000'000, 5'000'000);
-    }
-    const uint64_t win_start = now > window_us ? now - window_us : 0;
+    const uint64_t t0 = g_pb->start_time_us();
+    uint64_t t1 = g_pb->end_time_us();
+    if (t1 <= t0) t1 = t0 + 1;
+    const uint64_t phead = std::clamp<uint64_t>(g_pb->current_time_us(), t0, t1);
 
     const bool is_gyro = topic.find("gyro") != std::string::npos;
     float& scale = g_imu_scale[topic];
     if (scale <= 0.0f) scale = is_gyro ? 1.0f : 15.0f;
-    for (const auto& s : hist) {
-        if (s.t_us < win_start || s.t_us > now) continue;
+    for (const auto& s : hist)
         scale = std::max({scale, (float)std::abs(s.x), (float)std::abs(s.y),
                           (float)std::abs(s.z)});
+
+    // Value at the playhead (last sample at or before it) for the readout row.
+    double lv[3] = {0, 0, 0};
+    for (const auto& s : hist) {
+        if (s.t_us > phead) break;
+        lv[0] = s.x; lv[1] = s.y; lv[2] = s.z;
     }
 
     const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
@@ -260,7 +258,6 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
     if (inline_legend) {
         ImGui::PushFont(nullptr, theme::size::CAPTION);
         static const char* nm[3] = {"x", "y", "z"};
-        const double lv[3] = {latest.x, latest.y, latest.z};
         const float rw = (c1.x - c0.x) / 3.0f;
         for (int a = 0; a < 3; ++a) {
             float cx = c0.x + rw * a;
@@ -294,19 +291,36 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
     ImGui::PopFont();
 
     auto X = [&](uint64_t t) {
-        return c1.x - (float)((double)(now - t) / (double)window_us) * (c1.x - c0.x);
+        return c0.x + (float)((double)(t - t0) / (double)(t1 - t0)) * (c1.x - c0.x);
     };
     float mid = (c0.y + c1.y) * 0.5f;
     auto Y = [&](double v) {
         return mid - (float)std::clamp(v / scale, -1.0, 1.0) * (c1.y - c0.y) * 0.48f;
     };
+
+    // Per-pixel-column decimation: keep the sample with the largest |value|
+    // across the 3 axes in each x pixel, so spikes survive the whole-file view.
+    const int cols = std::max(1, (int)(c1.x - c0.x));
+    std::vector<int> rep(cols, -1);
+    for (int idx = 0; idx < (int)hist.size(); ++idx) {
+        const auto& s = hist[idx];
+        if (s.t_us < t0 || s.t_us > t1) continue;
+        int cx = std::clamp((int)(X(s.t_us) - c0.x), 0, cols - 1);
+        if (rep[cx] < 0) { rep[cx] = idx; continue; }
+        const auto& r = hist[rep[cx]];
+        double sm = std::max({std::abs(s.x), std::abs(s.y), std::abs(s.z)});
+        double rm = std::max({std::abs(r.x), std::abs(r.y), std::abs(r.z)});
+        if (sm > rm) rep[cx] = idx;
+    }
+
     dl->PushClipRect(c0, c1, true);
     for (int axis = 0; axis < 3; ++axis) {
         ImU32 col = u32(fade(acol[axis], 0.9f));
         bool have = false;
         ImVec2 prev;
-        for (const auto& s : hist) {
-            if (s.t_us < win_start || s.t_us > now) { have = false; continue; }
+        for (int cx = 0; cx < cols; ++cx) {
+            if (rep[cx] < 0) continue;
+            const auto& s = hist[rep[cx]];
             double raw = axis == 0 ? s.x : axis == 1 ? s.y : s.z;
             ImVec2 pt(X(s.t_us), Y(raw));
             if (have) dl->AddLine(prev, pt, col, 1.0f);
@@ -314,35 +328,32 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
             have = true;
         }
     }
+    // Playhead: a subtle vertical line at the current playback position.
+    float hx = std::clamp(X(phead), c0.x, c1.x);
+    dl->AddLine(ImVec2(hx, c0.y), ImVec2(hx, c1.y), u32(fade(p.light, 0.55f)), 1.0f);
     dl->PopClipRect();
 }
 
-// One audio peak-envelope into [amin, amax] (same 5s window).
+// One audio peak-envelope into [amin, amax] — same whole-file X axis + playhead.
 void audio_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, ImU32 bg) {
     const theme::Palette& p = theme::palette();
     auto hist = g_pb->audio_history();
     float w = amax.x - amin.x, h = amax.y - amin.y;
     dl->AddRectFilled(amin, amax, bg, theme::RADIUS);
 
-    // See imu_chart: anchor the right edge to the newest real sample, and
-    // shrink the window to the data span while there's less than 5s of it.
-    uint64_t now = g_pb->current_time_us();
-    if (!hist.empty() && hist.back().t_us < now) now = hist.back().t_us;
-    uint64_t window_us = 5'000'000;
-    if (!hist.empty()) {
-        uint64_t span = now > hist.front().t_us ? now - hist.front().t_us : 0;
-        window_us = std::clamp<uint64_t>(span, 1'000'000, 5'000'000);
-    }
-    const uint64_t win_start = now > window_us ? now - window_us : 0;
+    const uint64_t t0 = g_pb->start_time_us();
+    uint64_t t1 = g_pb->end_time_us();
+    if (t1 <= t0) t1 = t0 + 1;
+    const uint64_t phead = std::clamp<uint64_t>(g_pb->current_time_us(), t0, t1);
+
     const float cy = amin.y + h * 0.5f;
     const float amp_h = h * 0.5f - 10.0f;
 
     const int cols = std::max(1, (int)(w / 3.0f));
     std::vector<float> peak(cols, 0.0f);
     for (const auto& a : hist) {
-        if (a.t_us < win_start || a.t_us > now) continue;
-        int col = std::clamp((int)((double)(a.t_us - win_start) / (double)window_us * cols), 0,
-                             cols - 1);
+        if (a.t_us < t0 || a.t_us > t1) continue;
+        int col = std::clamp((int)((double)(a.t_us - t0) / (double)(t1 - t0) * cols), 0, cols - 1);
         peak[col] = std::max(peak[col], std::min(a.amp, 1.0f));
     }
     ImU32 wav = u32(mix(p.deep, p.subtle_text, 0.7f));
@@ -353,7 +364,9 @@ void audio_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, ImU32 bg) {
         dl->AddLine(ImVec2(x, cy - bh), ImVec2(x, cy + bh), wav, 1.0f);
     }
     dl->AddLine(ImVec2(amin.x, cy), ImVec2(amax.x, cy), u32(p.border), 1.0f);
-    dl->AddLine(ImVec2(amax.x - 1, amin.y), ImVec2(amax.x - 1, amax.y), u32(p.subtle_text), 1.0f);
+    float hx = amin.x + (float)((double)(phead - t0) / (double)(t1 - t0)) * w;
+    hx = std::clamp(hx, amin.x, amax.x);
+    dl->AddLine(ImVec2(hx, amin.y), ImVec2(hx, amax.y), u32(fade(p.light, 0.55f)), 1.0f);
 }
 
 // The recording's sensor topics, resolved once per frame for the insets.

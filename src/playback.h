@@ -81,6 +81,11 @@ private:
     void playback_loop();
     void dispatch(const McapMessage& msg);
     void do_seek_catchup(uint64_t target_us);
+    // Scan the whole file once at open() and pull every /imu/* + /audio sample
+    // into imu_hist_/audio_hist_ (they're tiny), so the sensor plots can show
+    // the entire recording at once (Foxglove recorded-playback style) rather
+    // than a rolling window fed by the playback thread.
+    void preload_history();
 
     McapReader reader_;
     std::string path_;
@@ -96,8 +101,12 @@ private:
     std::deque<AudioPoint> audio_hist_;
     bool has_audio_ = false;
     std::map<std::string, std::string> latest_summary_;
-    static constexpr size_t kImuHistCap = 8000;
-    static constexpr size_t kAudioHistCap = 20000;
+    // Whole recording is preloaded (see preload_history); once set, the
+    // playback thread stops appending to imu_hist_/audio_hist_ and seeks no
+    // longer clear them. Big caps because the deques now hold the full track.
+    std::atomic<bool> history_preloaded_{false};
+    static constexpr size_t kImuHistCap = 5'000'000;
+    static constexpr size_t kAudioHistCap = 5'000'000;
 
     std::thread thread_;
     std::atomic<bool> should_stop_{false};
