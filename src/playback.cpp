@@ -107,11 +107,16 @@ void Playback::play() {
 }
 
 void Playback::pause() {
-    if (!playing_.load()) return;
-    uint64_t now = current_time_us();
-    playing_.store(false);
+    // Freeze the virtual clock and clear playing_ atomically under clock_mutex_
+    // so a concurrent current_time_us() never sees playing_ == false with a
+    // stale clock_base_us_ (which made the scrubber flash backwards).
     std::lock_guard<std::mutex> lk(clock_mutex_);
-    clock_base_us_ = now;
+    if (!playing_.load()) return;
+    auto elapsed = std::chrono::steady_clock::now() - wall_anchor_;
+    double us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    uint64_t frozen = clock_base_us_ + (uint64_t)(us * speed_.load());
+    clock_base_us_ = std::min(frozen, reader_.end_time_us());
+    playing_.store(false);
 }
 
 void Playback::toggle() { playing_.load() ? pause() : play(); }
