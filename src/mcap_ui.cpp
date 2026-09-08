@@ -342,32 +342,6 @@ void sensor_mini(ImDrawList* dl, ImVec2 r0, ImVec2 r1, int kind, const SensorTop
     ImGui::PopFont();
 }
 
-// The "X value" legend rows drawn beside a chart in the video-panel inset.
-void sensor_legend(ImDrawList* dl, ImVec2 at, int kind, const SensorTopics& st) {
-    const theme::Palette& p = theme::palette();
-    if (kind == 2) {
-        ImGui::PushFont(nullptr, theme::size::CAPTION);
-        dl->AddText(at, u32(p.subtle_text), "mono");
-        ImGui::PopFont();
-        return;
-    }
-    auto last = g_pb->imu_latest(kind == 1 ? st.gyro : st.accel);
-    const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
-    static const char* nm[3] = {"X", "Y", "Z"};
-    double vv[3] = {last.x, last.y, last.z};
-    ImGui::PushFont(nullptr, theme::size::SMALL);
-    float lh = ImGui::GetTextLineHeight() + 3.0f;
-    for (int a = 0; a < 3; ++a) {
-        float y = at.y + a * lh;
-        dl->AddCircleFilled(ImVec2(at.x + 4.0f, y + lh * 0.5f - 1.0f), 3.5f, u32(acol[a]));
-        dl->AddText(ImVec2(at.x + 13.0f, y), u32(acol[a]), nm[a]);
-        char b[24];
-        std::snprintf(b, sizeof(b), "% .2f", vv[a]);
-        dl->AddText(ImVec2(at.x + 30.0f, y), u32(p.text), b);
-    }
-    ImGui::PopFont();
-}
-
 // ── Video panel ────────────────────────────────────────────────────────
 // A Blockbench-style panel: square, flush-tiled, a `panel_handle`-like
 // header (uppercase muted title + controls that only surface on hover)
@@ -498,8 +472,8 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
                         u32(hov ? p.light : p.text), "IMU");
             ImGui::PopFont();
         } else {
-            float iw = std::floor(std::clamp(csz.x * 0.54f, 260.0f, 400.0f));
-            float ih = std::floor(std::clamp(csz.y * 0.40f, 150.0f, 230.0f));
+            float iw = std::floor(std::clamp(csz.x * 0.42f, 220.0f, 310.0f));
+            float ih = std::floor(std::clamp(csz.y * 0.22f, 124.0f, 150.0f));
             ImVec2 q0(std::floor(c0.x + 8.0f), std::floor(c0.y + csz.y - 8.0f - ih));
             ImVec2 q1(q0.x + iw, q0.y + ih);
             dl->AddRectFilled(q0, q1, chip_bg, 5.0f);
@@ -551,18 +525,10 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
                 (v.sensor == 2 && !tabs[2].on))
                 v.sensor = st.first();
 
-            // ── section label + legend (left) + chart (right) ──────────
-            float by = q0.y + TB + 2.0f;
-            const char* slabel = v.sensor == 0 ? "ACCEL" : v.sensor == 1 ? "GYRO" : "AUDIO";
-            ImGui::PushFont(fonts::medium(), theme::size::CAPTION);
-            dl->AddText(ImVec2(q0.x + 8.0f, std::floor(by)), u32(p.subtle_text), slabel);
-            float slh = ImGui::GetTextLineHeight() + 4.0f;
-            ImGui::PopFont();
-
-            float legend_w = 96.0f;
-            sensor_legend(dl, ImVec2(q0.x + 8.0f, std::floor(by + slh + 2.0f)), v.sensor, st);
-            sensor_mini(dl, ImVec2(std::floor(q0.x + legend_w), std::floor(by + slh)),
-                        ImVec2(q1.x - 6.0f, q1.y - 6.0f), v.sensor, st, /*inline_legend=*/false);
+            // ── chart (the active tab already names it; x/y/z legend is
+            //    drawn inside the chart, matching the right panel) ────────
+            sensor_mini(dl, ImVec2(q0.x + 4.0f, std::floor(q0.y + TB + 1.0f)),
+                        ImVec2(q1.x - 4.0f, q1.y - 4.0f), v.sensor, st);
         }
         ImGui::PopID();
     }
