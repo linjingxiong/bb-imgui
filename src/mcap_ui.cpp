@@ -71,7 +71,7 @@ constexpr float TRANSPORT_H = 58.0f;
 constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = 324.0f;
-bool g_panel_hidden = false; // right INSPECTOR panel collapsed (rail toggle)
+bool g_panel_hidden = true; // right INSPECTOR panel collapsed (rail toggle); hidden by default
 
 // Icon sizes (Blockbench: .material-icons 22px, .tool 36x30).
 constexpr float RAIL_ICON_PX = 24.0f;
@@ -203,7 +203,7 @@ void rail(ImVec2 pos, ImVec2 size) {
         g_sensor_panel.clear();
         g_focus_topic.clear();
         g_featured.clear();
-        g_panel_hidden = false;
+        g_panel_hidden = true;
     }
     rail_sep();
     if (rail_btn(ICON_FOLDER_OPEN, "Open MCAP\xe2\x80\xa6", false)) open_dialog();
@@ -731,7 +731,21 @@ void display(ImVec2 pos, ImVec2 size) {
     ImGui::BeginChild("##display", size, ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(pos, pos + size, u32(p.deep)); // Blockbench --color-dark stage
+    // Blockbench-style checkerboard stage (its transparency-canvas look).
+    {
+        const ImU32 ck0 = u32(p.checkerboard);
+        const ImU32 ck1 = u32(mix(p.checkerboard, p.light, 0.06f));
+        const float cell = 12.0f;
+        dl->AddRectFilled(pos, pos + size, ck0);
+        dl->PushClipRect(pos, pos + size, true);
+        int cols = (int)(size.x / cell) + 1, rows = (int)(size.y / cell) + 1;
+        for (int r = 0; r < rows; ++r)
+            for (int c = (r & 1); c < cols; c += 2) {
+                ImVec2 cp(pos.x + c * cell, pos.y + r * cell);
+                dl->AddRectFilled(cp, ImVec2(cp.x + cell, cp.y + cell), ck1);
+            }
+        dl->PopClipRect();
+    }
 
     const bool ready = has_file() && !g_pb->video_topics().empty();
     if (!ready) {
