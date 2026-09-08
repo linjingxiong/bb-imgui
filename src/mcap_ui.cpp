@@ -1308,21 +1308,23 @@ void layout(ImVec2 o, ImVec2 sz) {
     ImVec2 rail_pos = o;
     ImVec2 rail_sz(RAIL_W, sz.y);
 
-    ImVec2 transport_pos(o.x + RAIL_W, o.y + region_h);
-    ImVec2 transport_sz(body_w, TRANSPORT_H);
-
-    // Left dock panel, then the video stage to its right.
+    // Left dock panel spans the full height; the video stage + its transport
+    // stack vertically in the column to its right.
     ImVec2 panel_pos(o.x + RAIL_W, o.y);
-    ImVec2 panel_sz(panel_w, region_h);
+    ImVec2 panel_sz(panel_w, sz.y);
 
+    float stage_w = std::max(120.0f, body_w - panel_w);
     ImVec2 disp_pos(o.x + RAIL_W + panel_w, o.y);
-    ImVec2 disp_sz(std::max(120.0f, body_w - panel_w), region_h);
+    ImVec2 disp_sz(stage_w, region_h);
+
+    ImVec2 transport_pos(o.x + RAIL_W + panel_w, o.y + region_h);
+    ImVec2 transport_sz(stage_w, TRANSPORT_H);
 
     display(disp_pos, disp_sz);
     if (panel_w > 0.0f) side_panel(panel_pos, panel_sz);
     transport(transport_pos, transport_sz);
     rail(rail_pos, rail_sz);
-    if (panel_w > 0.0f) panel_splitter(panel_pos.x + panel_w, o, panel_sz.y);
+    if (panel_w > 0.0f) panel_splitter(panel_pos.x + panel_w, o, sz.y);
 }
 
 } // namespace mcap_ui
