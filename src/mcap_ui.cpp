@@ -552,28 +552,32 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
                            {"Gyro", 1, !st.gyro.empty()},
                            {"Audio", 2, st.audio}};
             ImGui::PushFont(nullptr, theme::size::SMALL);
-            float tx = q0.x + 5.0f;
+            float tx = q0.x;
+            bool first = true;
             for (auto& tb : tabs) {
                 if (!tb.on) continue;
                 ImVec2 ts = ImGui::CalcTextSize(tb.name);
                 float tbw = 12.0f + ts.x + 12.0f;
-                ImVec2 t0(std::floor(tx), std::floor(q0.y + 4.0f));
+                ImVec2 t0(std::floor(tx), std::floor(q0.y));
                 ImVec2 t1(std::floor(tx + tbw), std::floor(q0.y + TB));
                 ImGui::SetCursorScreenPos(t0);
                 ImGui::PushID(tb.kind);
-                ImGui::InvisibleButton("t", ImVec2(tbw, TB - 4.0f));
+                ImGui::InvisibleButton("t", ImVec2(tbw, TB));
                 bool th = ImGui::IsItemHovered();
                 if (th) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 if (ImGui::IsItemClicked()) v.sensor = tb.kind;
                 ImGui::PopID();
                 bool sel = (v.sensor == tb.kind);
                 if (sel)
-                    dl->AddRectFilled(t0, t1, cbg, 4.0f, ImDrawFlags_RoundCornersTop);
+                    dl->AddRectFilled(t0, t1, cbg, 5.0f,
+                                      first ? ImDrawFlags_RoundCornersTopLeft
+                                            : ImDrawFlags_RoundCornersNone);
                 ImU32 fg = u32(sel ? p.text : (th ? p.light : p.subtle_text));
                 dl->AddText(ImVec2(std::floor(t0.x + (tbw - ts.x) * 0.5f),
-                                   std::floor(t0.y + ((t1.y - t0.y) - ts.y) * 0.5f)),
+                                   std::floor(t0.y + (TB - ts.y) * 0.5f)),
                             fg, tb.name);
                 tx += tbw + 2.0f;
+                first = false;
             }
             ImGui::PopFont();
             // collapse chevron
