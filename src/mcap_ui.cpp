@@ -567,10 +567,8 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
                 if (ImGui::IsItemClicked()) v.sensor = tb.kind;
                 ImGui::PopID();
                 bool sel = (v.sensor == tb.kind);
-                if (sel) {
+                if (sel)
                     dl->AddRectFilled(t0, t1, cbg, 4.0f, ImDrawFlags_RoundCornersTop);
-                    dl->AddRectFilled(t0, ImVec2(t1.x, t0.y + 2.0f), u32(p.accent), 0.0f);
-                }
                 ImU32 fg = u32(sel ? p.text : (th ? p.light : p.subtle_text));
                 dl->AddText(ImVec2(std::floor(t0.x + (tbw - ts.x) * 0.5f),
                                    std::floor(t0.y + ((t1.y - t0.y) - ts.y) * 0.5f)),
