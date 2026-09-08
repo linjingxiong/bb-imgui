@@ -248,7 +248,21 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
 
     const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
     static const char* nm[3] = {"x", "y", "z"};
-    const float y_label_w = 24.0f;
+    const int dec = scale >= 10 ? 0 : (scale >= 1 ? 1 : 2);
+
+    // Size the Y-label gutter to the widest label + an equal gap on each side
+    // (window edge <-> labels <-> plot). Labels are right-aligned so the digits
+    // line up on a vertical line regardless of sign / digit count.
+    const float LG = 4.0f;
+    float lbl_w = 0.0f;
+    ImGui::PushFont(nullptr, theme::size::CAPTION);
+    for (int i = 0; i <= 4; ++i) {
+        char lbl[16];
+        std::snprintf(lbl, sizeof(lbl), "%.*f", dec, (1.0f - i / 2.0f) * scale);
+        lbl_w = std::max(lbl_w, ImGui::CalcTextSize(lbl).x);
+    }
+    ImGui::PopFont();
+    const float y_label_w = lbl_w + LG * 2.0f;
     const float leg_h = inline_legend ? 15.0f : 0.0f; // bottom strip for the x/y/z row
     ImVec2 c0(amin.x + y_label_w, amin.y + 4.0f);
     ImVec2 c1(amax.x, amax.y - 4.0f - leg_h);
@@ -260,7 +274,6 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
         dl->AddLine(ImVec2(gx, c0.y), ImVec2(gx, c1.y), grid, 1.0f);
     }
     ImGui::PushFont(nullptr, theme::size::CAPTION);
-    int dec = scale >= 10 ? 0 : (scale >= 1 ? 1 : 2);
     for (int i = 0; i <= 4; ++i) {
         float f = 1.0f - i / 2.0f;
         float gy = c0.y + (c1.y - c0.y) * i / 4.0f;
@@ -269,8 +282,8 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
         char lbl[16];
         std::snprintf(lbl, sizeof(lbl), "%.*f", dec, f * scale);
         ImVec2 ts = ImGui::CalcTextSize(lbl);
-        // Left-aligned flush with the chart's left edge (labels line up vertically).
-        dl->AddText(ImVec2(amin.x, gy - ts.y * 0.5f), u32(p.subtle_text), lbl);
+        // Right-aligned within the [amin.x+LG, c0.x-LG] column.
+        dl->AddText(ImVec2(c0.x - LG - ts.x, gy - ts.y * 0.5f), u32(p.subtle_text), lbl);
     }
     ImGui::PopFont();
 
