@@ -70,7 +70,7 @@ constexpr float TRANSPORT_H = 44.0f;
 constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = PANEL_W_MIN; // opens at the minimum width; drag to widen
-bool g_panel_hidden = true; // left dock panel collapsed (rail toggle); hidden by default
+bool g_panel_hidden = false; // left dock panel (rail toggle); shown by default
 
 // Icon sizes (Blockbench: .material-icons 22px, .tool 36x30).
 constexpr float RAIL_ICON_PX = 24.0f;
@@ -202,7 +202,7 @@ void rail(ImVec2 pos, ImVec2 size) {
         g_sensor_panel.clear();
         g_focus_topic.clear();
         g_featured.clear();
-        g_panel_hidden = true;
+        g_panel_hidden = false;
     }
     rail_sep();
     if (rail_btn(ICON_FOLDER_OPEN, "Open MCAP\xe2\x80\xa6", false)) open_dialog();

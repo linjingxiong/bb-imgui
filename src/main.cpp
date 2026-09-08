@@ -22,6 +22,7 @@
 #include "shell.h"
 #include "theme.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -168,6 +169,23 @@ WGPUDevice request_device(WGPUAdapter adapter) {
 #include <GLFW/glfw3native.h>
 #undef Status
 
+// Directory containing the running executable (assets live next to it).
+static std::string exe_dir() {
+    char buf[4096] = {0};
+#if defined(_WIN32)
+    GetModuleFileNameA(nullptr, buf, sizeof(buf));
+#elif defined(__APPLE__)
+    uint32_t n = sizeof(buf);
+    _NSGetExecutablePath(buf, &n);
+#else
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) buf[n] = 0;
+#endif
+    std::string p(buf);
+    auto slash = p.find_last_of("/\\");
+    return slash == std::string::npos ? std::string(".") : p.substr(0, slash);
+}
+
 static WGPUSurface create_surface(WGPUInstance instance, GLFWwindow* window) {
     ImGui_ImplWGPU_CreateSurfaceInfo info = {};
     info.Instance = instance;
@@ -276,6 +294,20 @@ int main(int argc, char** argv) {
     GLFWwindow* window = glfwCreateWindow(g_surface_w, g_surface_h, "Blockbench", nullptr, nullptr);
     if (!window)
         return 1;
+
+    // Window / taskbar icon: <exe dir>/assets/logo.rgba = [u32 w][u32 h][RGBA].
+    if (std::FILE* f = std::fopen((exe_dir() + "/assets/logo.rgba").c_str(), "rb")) {
+        uint32_t wh[2] = {0, 0};
+        if (std::fread(wh, sizeof(wh), 1, f) == 1 && wh[0] > 0 && wh[0] <= 1024 &&
+            wh[1] > 0 && wh[1] <= 1024) {
+            std::vector<unsigned char> px((size_t)wh[0] * wh[1] * 4);
+            if (std::fread(px.data(), 1, px.size(), f) == px.size()) {
+                GLFWimage img{(int)wh[0], (int)wh[1], px.data()};
+                glfwSetWindowIcon(window, 1, &img);
+            }
+        }
+        std::fclose(f);
+    }
 
     // Centre on the primary monitor's work area (borderless windows get no
     // WM placement, so they land at 0,0 otherwise).
