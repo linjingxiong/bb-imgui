@@ -230,7 +230,13 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
     // decode is heavy, leaving dead air on the right). Only clamp downward.
     uint64_t now = g_pb->current_time_us();
     if (!hist.empty() && hist.back().t_us < now) now = hist.back().t_us;
-    const uint64_t window_us = 5'000'000;
+    // 5s rolling window, but shrink to the data span while there's less than
+    // that (just after open / seek) so the trace fills the whole width.
+    uint64_t window_us = 5'000'000;
+    if (!hist.empty()) {
+        uint64_t span = now > hist.front().t_us ? now - hist.front().t_us : 0;
+        window_us = std::clamp<uint64_t>(span, 1'000'000, 5'000'000);
+    }
     const uint64_t win_start = now > window_us ? now - window_us : 0;
 
     const bool is_gyro = topic.find("gyro") != std::string::npos;
@@ -242,10 +248,31 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
                           (float)std::abs(s.z)});
     }
 
+    const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
     const float y_label_w = 30.0f;
-    ImVec2 c0(amin.x + y_label_w, amin.y + 4.0f);
+    const float head_h = inline_legend ? 16.0f : 4.0f;
+    ImVec2 c0(amin.x + y_label_w, amin.y + head_h);
     ImVec2 c1(amax.x, amax.y - 4.0f);
     dl->AddRectFilled(c0, c1, bg);
+
+    // Blockbench Transform-field style readout row across the top: a small
+    // corner triangle in the axis colour + a dim letter + the neutral value.
+    if (inline_legend) {
+        ImGui::PushFont(nullptr, theme::size::CAPTION);
+        static const char* nm[3] = {"x", "y", "z"};
+        const double lv[3] = {latest.x, latest.y, latest.z};
+        const float rw = (c1.x - c0.x) / 3.0f;
+        for (int a = 0; a < 3; ++a) {
+            float cx = c0.x + rw * a;
+            dl->AddTriangleFilled(ImVec2(cx, amin.y), ImVec2(cx + 6, amin.y),
+                                  ImVec2(cx, amin.y + 6), u32(acol[a]));
+            dl->AddText(ImVec2(cx + 10, amin.y - 1), u32(p.subtle_text), nm[a]);
+            char t[32];
+            std::snprintf(t, sizeof(t), "% .*f", scale >= 10 ? 2 : 3, lv[a]);
+            dl->AddText(ImVec2(cx + 20, amin.y - 1), u32(p.text), t);
+        }
+        ImGui::PopFont();
+    }
 
     const ImU32 grid = u32(p.grid);
     for (int i = 0; i <= 5; ++i) {
@@ -257,7 +284,8 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
     for (int i = 0; i <= 4; ++i) {
         float f = 1.0f - i / 2.0f;
         float gy = c0.y + (c1.y - c0.y) * i / 4.0f;
-        dl->AddLine(ImVec2(c0.x, gy), ImVec2(c1.x, gy), grid, 1.0f);
+        // Emphasise the y=0 baseline (i==2), like Blockbench's graph editor.
+        dl->AddLine(ImVec2(c0.x, gy), ImVec2(c1.x, gy), i == 2 ? u32(p.subtle_text) : grid, 1.0f);
         char lbl[16];
         std::snprintf(lbl, sizeof(lbl), "%.*f", dec, f * scale);
         ImVec2 ts = ImGui::CalcTextSize(lbl);
@@ -272,7 +300,6 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
     auto Y = [&](double v) {
         return mid - (float)std::clamp(v / scale, -1.0, 1.0) * (c1.y - c0.y) * 0.48f;
     };
-    const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
     dl->PushClipRect(c0, c1, true);
     for (int axis = 0; axis < 3; ++axis) {
         ImU32 col = u32(fade(acol[axis], 0.9f));
@@ -288,20 +315,6 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
         }
     }
     dl->PopClipRect();
-
-    if (!inline_legend) return;
-    ImGui::PushFont(nullptr, theme::size::CAPTION);
-    static const char* names[3] = {"x", "y", "z"};
-    double vals[3] = {latest.x, latest.y, latest.z};
-    float ly = c1.y - 4.0f - 14.0f * 3;
-    for (int axis = 0; axis < 3; ++axis) {
-        dl->AddCircleFilled(ImVec2(c0.x + 8, ly + 6), 3.5f, u32(acol[axis]));
-        char t[40];
-        std::snprintf(t, sizeof(t), "%s  % .*f", names[axis], scale >= 10 ? 2 : 3, vals[axis]);
-        dl->AddText(ImVec2(c0.x + 16, ly), u32(acol[axis]), t);
-        ly += 14.0f;
-    }
-    ImGui::PopFont();
 }
 
 // One audio peak-envelope into [amin, amax] (same 5s window).
@@ -311,10 +324,15 @@ void audio_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, ImU32 bg) {
     float w = amax.x - amin.x, h = amax.y - amin.y;
     dl->AddRectFilled(amin, amax, bg, theme::RADIUS);
 
-    // See imu_chart: anchor the right edge to the newest real sample.
+    // See imu_chart: anchor the right edge to the newest real sample, and
+    // shrink the window to the data span while there's less than 5s of it.
     uint64_t now = g_pb->current_time_us();
     if (!hist.empty() && hist.back().t_us < now) now = hist.back().t_us;
-    const uint64_t window_us = 5'000'000;
+    uint64_t window_us = 5'000'000;
+    if (!hist.empty()) {
+        uint64_t span = now > hist.front().t_us ? now - hist.front().t_us : 0;
+        window_us = std::clamp<uint64_t>(span, 1'000'000, 5'000'000);
+    }
     const uint64_t win_start = now > window_us ? now - window_us : 0;
     const float cy = amin.y + h * 0.5f;
     const float amp_h = h * 0.5f - 10.0f;
@@ -545,7 +563,7 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
             //    (the active tab already names it; legend is inside) ───────
             ImVec2 cmin(q0.x + 2.0f, std::floor(q0.y + TB + 1.0f));
             ImVec2 cmax(q1.x - 2.0f, q1.y - 3.0f);
-            ImU32 cbg = u32(fade(p.deep, 0.9f));
+            ImU32 cbg = u32(fade(p.frame, 0.9f));
             if (v.sensor == 2) audio_chart(dl, cmin, cmax, cbg);
             else imu_chart(dl, cmin, cmax, v.sensor == 1 ? st.gyro : st.accel, true, cbg);
         }
@@ -936,7 +954,7 @@ void imu_plot(const std::string& topic, float height) {
     ImVec2 pos = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
     imu_chart(ImGui::GetWindowDrawList(), pos, ImVec2(pos.x + w, pos.y + height), topic,
-              /*inline_legend=*/true, u32(theme::palette().deep));
+              /*inline_legend=*/true, u32(theme::palette().frame));
     ImGui::Dummy(ImVec2(w, height));
 }
 
@@ -945,10 +963,7 @@ void audio_panel(float height) {
     ImVec2 pos = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    audio_chart(dl, pos, ImVec2(pos.x + w, pos.y + height), u32(p.deep));
-    ImGui::PushFont(fonts::medium(), theme::size::CAPTION);
-    dl->AddText(ImVec2(pos.x + 6, pos.y + 3), u32(p.subtle_text), "AUDIO");
-    ImGui::PopFont();
+    audio_chart(dl, pos, ImVec2(pos.x + w, pos.y + height), u32(p.frame));
     ImGui::Dummy(ImVec2(w, height));
 }
 
@@ -964,13 +979,12 @@ void sensors_body() {
     for (const auto& t : g_pb->topics()) {
         if (t.rfind("/imu/", 0) != 0) continue;
         any = true;
-        ImGui::PushFont(fonts::medium(), theme::size::CAPTION);
-        ImGui::TextColored(p.subtle_text, "%s", upper(short_topic(t)).c_str());
-        ImGui::PopFont();
+        bb::field_label(upper(short_topic(t)).c_str());
         imu_plot(t, 120.0f);
         ImGui::Dummy(ImVec2(0, 8));
     }
     if (g_pb->has_audio()) {
+        bb::field_label("AUDIO");
         audio_panel(72.0f);
         any = true;
     }
