@@ -69,7 +69,7 @@ constexpr float RAIL_W = 48.0f;
 constexpr float TRANSPORT_H = 44.0f;
 constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
-float g_panel_w = 324.0f;
+float g_panel_w = PANEL_W_MIN; // opens at the minimum width; drag to widen
 bool g_panel_hidden = true; // left dock panel collapsed (rail toggle); hidden by default
 
 // Icon sizes (Blockbench: .material-icons 22px, .tool 36x30).
