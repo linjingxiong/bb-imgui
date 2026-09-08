@@ -241,12 +241,6 @@ void Playback::dispatch(const McapMessage& msg) {
     DecodedCompressedVideo v;
     if (!decode_compressed_video(msg.data, v)) return;
 
-    if (suppress_catchup_display_) {
-        // Only the target frame is displayed after catch-up — advance decoder
-        // state through the P-frame chain without converting each one.
-        dit->second->decode_discard(v.format, v.data.data(), (int)v.data.size());
-        return;
-    }
     auto frame = dit->second->decode(v.format, v.data.data(), (int)v.data.size());
     if (frame) {
         frame->timestamp_us = v.timestamp_us;
@@ -272,36 +266,49 @@ void Playback::do_seek_catchup(uint64_t target_us) {
     uint64_t from_us = reader_.seekable_start_time_us(target_us);
     if (from_us > target_us) from_us = target_us;
 
-    // Split the catch-up window into a warm-up pass (decode_discard only —
-    // just advancing decoder reference state) and a short tail pass with
-    // suppression off so the final visible frame per topic actually gets
-    // converted. When the whole window is already short (seeking near the
-    // file start), skip the split and just decode it all normally.
-    // The tail pass reads a little PAST the target too: the frame to display
-    // for a seek is "the one at or just after target". For target == file
-    // start (or a sparse stream) there's nothing before it, so without this
-    // the panels stay blank until the first play. Keep this small — a large
-    // margin decodes+shows dozens of frames past the target ("plays forward
-    // after a scrub").
-    const uint64_t tail_us = 80'000;
+    // Run the whole window through the decoder without emitting a single
+    // intermediate frame (decode_discard advances the P-frame chain only).
+    // For each video topic keep the last packet at or before the target
+    // (or, near the file start, the first packet after it); decode just
+    // that one at the end so the panel updates exactly once.
     const uint64_t tail_fwd_us = 120'000;
-    const uint64_t warm_end = target_us > from_us + tail_us ? target_us - tail_us : from_us;
+    std::map<std::string, DecodedCompressedVideo> want; // topic -> packet to show
 
-    if (warm_end > from_us) {
-        suppress_catchup_display_ = true;
-        reader_.read_messages(from_us, warm_end, [&](const McapMessage& m) -> bool {
-            if (should_stop_.load() || seek_pending_.load()) return false;
-            dispatch(m);
-            return true;
-        });
-        suppress_catchup_display_ = false;
-    }
-
-    reader_.read_messages(warm_end, target_us + tail_fwd_us, [&](const McapMessage& m) -> bool {
+    reader_.read_messages(from_us, target_us + tail_fwd_us, [&](const McapMessage& m) -> bool {
         if (should_stop_.load() || seek_pending_.load()) return false;
-        dispatch(m);
+        if (!is_video_topic(m.topic)) {
+            dispatch(m); // summary / (non-preloaded) imu+audio
+            return true;
+        }
+        auto dit = decoders_.find(m.topic);
+        if (dit == decoders_.end()) return true;
+        DecodedCompressedVideo v;
+        if (!decode_compressed_video(m.data, v)) return true;
+        if (v.timestamp_us <= target_us) {
+            auto it = want.find(m.topic);
+            if (it != want.end())
+                dit->second->decode_discard(it->second.format, it->second.data.data(),
+                                            (int)it->second.data.size());
+            want[m.topic] = std::move(v);
+        } else if (want.find(m.topic) == want.end()) {
+            want[m.topic] = std::move(v); // nothing before target — fall back to the next frame
+        }
         return true;
     });
+
+    for (auto& [topic, v] : want) {
+        auto dit = decoders_.find(topic);
+        if (dit == decoders_.end()) continue;
+        auto frame = dit->second->decode(v.format, v.data.data(), (int)v.data.size());
+        if (!frame) continue;
+        frame->timestamp_us = v.timestamp_us;
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "%dx%d  %s  '%s'", frame->width, frame->height,
+                      v.format.c_str(), v.frame_id.c_str());
+        std::lock_guard<std::mutex> lk(frames_mutex_);
+        latest_frames_[topic] = frame;
+        latest_summary_[topic] = buf;
+    }
 }
 
 void Playback::playback_loop() {

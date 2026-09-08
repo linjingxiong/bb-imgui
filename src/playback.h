@@ -126,8 +126,6 @@ private:
     std::atomic<int64_t> last_dispatch_ns_{0}; // steady_clock ns at that dispatch
     std::mutex pause_mutex_;
     std::condition_variable pause_cv_;
-
-    bool suppress_catchup_display_ = false;
 };
 
 } // namespace mp
