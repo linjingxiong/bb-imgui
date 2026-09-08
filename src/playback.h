@@ -118,16 +118,15 @@ private:
     std::atomic<float> speed_{1.0f};
     std::atomic<bool> seek_pending_{false};
     std::atomic<uint64_t> pending_seek_us_{0};
+    // The single playback clock: the log time of the last dispatched message.
+    // current_time_us() reads this (plus a small capped wall-time interpolation
+    // while playing, so the scrubber glides between frames). No separate
+    // free-running virtual clock — the dispatch loop is the source of truth.
     std::atomic<uint64_t> current_time_us_{0};
+    std::atomic<int64_t> last_dispatch_ns_{0}; // steady_clock ns at that dispatch
     std::mutex pause_mutex_;
     std::condition_variable pause_cv_;
 
-    // Virtual clock (see EgoViewer's virtualClockUs): advance the displayed
-    // cursor by elapsed wall time while playing, independent of the dispatch
-    // loop's sleep pacing. Touched from the caller's thread only.
-    mutable std::mutex clock_mutex_;
-    uint64_t clock_base_us_ = 0;
-    std::chrono::steady_clock::time_point wall_anchor_;
     bool suppress_catchup_display_ = false;
 };
 

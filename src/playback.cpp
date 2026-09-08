@@ -36,11 +36,7 @@ bool Playback::open(const std::string& path) {
     preload_history();
 
     current_time_us_.store(reader_.start_time_us());
-    {
-        std::lock_guard<std::mutex> lk(clock_mutex_);
-        clock_base_us_ = reader_.start_time_us();
-        wall_anchor_ = std::chrono::steady_clock::now();
-    }
+    last_dispatch_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count());
     should_stop_.store(false);
     seek_pending_.store(false);
     playing_.store(false);
@@ -97,61 +93,39 @@ void Playback::stop_thread() {
 
 void Playback::play() {
     if (!reader_.is_open() || playing_.load()) return;
-    {
-        std::lock_guard<std::mutex> lk(clock_mutex_);
-        clock_base_us_ = current_time_us_.load();
-        wall_anchor_ = std::chrono::steady_clock::now();
-    }
+    last_dispatch_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count());
     playing_.store(true);
     pause_cv_.notify_all();
 }
 
-void Playback::pause() {
-    // Freeze the virtual clock and clear playing_ atomically under clock_mutex_
-    // so a concurrent current_time_us() never sees playing_ == false with a
-    // stale clock_base_us_ (which made the scrubber flash backwards).
-    std::lock_guard<std::mutex> lk(clock_mutex_);
-    if (!playing_.load()) return;
-    auto elapsed = std::chrono::steady_clock::now() - wall_anchor_;
-    double us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
-    uint64_t frozen = clock_base_us_ + (uint64_t)(us * speed_.load());
-    clock_base_us_ = std::min(frozen, reader_.end_time_us());
-    playing_.store(false);
-}
+void Playback::pause() { playing_.store(false); }
 
 void Playback::toggle() { playing_.load() ? pause() : play(); }
 
-void Playback::set_speed(float x) {
-    x = std::clamp(x, 0.25f, 8.0f);
-    // Re-anchor the virtual clock so the displayed position doesn't jump.
-    uint64_t now = current_time_us();
-    speed_.store(x);
-    std::lock_guard<std::mutex> lk(clock_mutex_);
-    clock_base_us_ = now;
-    wall_anchor_ = std::chrono::steady_clock::now();
-}
+void Playback::set_speed(float x) { speed_.store(std::clamp(x, 0.25f, 8.0f)); }
 
 void Playback::seek(uint64_t timestamp_us) {
     if (!reader_.is_open()) return;
     uint64_t clamped = std::clamp(timestamp_us, reader_.start_time_us(), reader_.end_time_us());
     pending_seek_us_.store(clamped);
     seek_pending_.store(true);
-    current_time_us_.store(clamped);
-    {
-        std::lock_guard<std::mutex> lk(clock_mutex_);
-        clock_base_us_ = clamped;
-        wall_anchor_ = std::chrono::steady_clock::now();
-    }
+    current_time_us_.store(clamped); // scrubber reflects the target immediately
+    last_dispatch_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count());
     pause_cv_.notify_all();
 }
 
 uint64_t Playback::current_time_us() const {
-    std::lock_guard<std::mutex> lk(clock_mutex_);
-    if (!playing_.load()) return clock_base_us_;
-    auto elapsed = std::chrono::steady_clock::now() - wall_anchor_;
-    double us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
-    uint64_t t = clock_base_us_ + (uint64_t)(us * speed_.load());
-    return std::min(t, reader_.end_time_us());
+    uint64_t base = std::min(current_time_us_.load(), reader_.end_time_us());
+    if (!playing_.load()) return base;
+    // While playing, glide up to one frame ahead of the last dispatched
+    // message so the scrubber isn't stepped; never further (no drift).
+    constexpr int64_t kInterpCapUs = 50'000;
+    auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    int64_t wall_us = (now - last_dispatch_ns_.load()) / 1000;
+    if (wall_us < 0) wall_us = 0;
+    int64_t adv = (int64_t)(wall_us * (double)speed_.load());
+    if (adv > kInterpCapUs) adv = kInterpCapUs;
+    return std::min(base + (uint64_t)adv, reader_.end_time_us());
 }
 
 VideoFramePtr Playback::latest_frame(const std::string& topic) {
@@ -380,13 +354,13 @@ void Playback::playback_loop() {
 
             dispatch(msg);
             current_time_us_.store(msg.timestamp_us);
+            last_dispatch_ns_.store(clock::now().time_since_epoch().count());
             return true;
         });
 
         if (!interrupted && !should_stop_.load() && !seek_pending_.load()) {
-            playing_.store(false); // reached end of file
-            std::lock_guard<std::mutex> lk(clock_mutex_);
-            clock_base_us_ = reader_.end_time_us();
+            current_time_us_.store(reader_.end_time_us()); // reached end of file
+            playing_.store(false);
         }
     }
 }
