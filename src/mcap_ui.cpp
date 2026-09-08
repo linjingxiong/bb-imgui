@@ -196,7 +196,8 @@ void rail(ImVec2 pos, ImVec2 size) {
     rail_sep();
     if (rail_btn(ICON_FOLDER_OPEN, "Open MCAP\xe2\x80\xa6", false)) open_dialog();
     if (rail_btn(ICON_ROTATE, "Rotate video 90\xc2\xb0", false)) rotate_all();
-    {
+    // The spotlight layout only makes sense with a crowd of cameras.
+    if (has_file() && g_pb->video_topics().size() > 4) {
         int& lay = settings::get().layout;
         if (rail_btn(lay == 1 ? ICON_VIEW_SIDEBAR : ICON_GRID_VIEW,
                      lay == 1 ? "Layout: spotlight" : "Layout: grid", false)) {
@@ -366,7 +367,7 @@ void display(ImVec2 pos, ImVec2 size) {
         return;
     }
 
-    if (settings::get().layout == 1) {
+    if (settings::get().layout == 1 && n > 4) {
         // ── Spotlight: one feature video + a scrolling strip of the rest ──
         if (g_featured.empty() ||
             std::find(vts.begin(), vts.end(), g_featured) == vts.end())
