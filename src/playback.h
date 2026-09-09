@@ -96,6 +96,10 @@ private:
     std::vector<std::string> video_topics_;
 
     std::map<std::string, std::unique_ptr<VideoDecoder>> decoders_;
+    // Per video topic, the sorted log times of its keyframes (collected during
+    // preload_history). do_seek_catchup starts decoding from the last one at
+    // or before the target, so a seek only walks a single GOP.
+    std::map<std::string, std::vector<uint64_t>> video_keyframes_;
 
     std::mutex frames_mutex_;
     std::map<std::string, VideoFramePtr> latest_frames_;

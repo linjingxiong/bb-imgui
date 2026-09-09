@@ -12,6 +12,84 @@ namespace mp {
 namespace {
 bool is_video_topic(const std::string& t) { return t.rfind("/camera/", 0) == 0; }
 bool is_imu_topic(const std::string& t) { return t.rfind("/imu/", 0) == 0; }
+
+// Does this compressed packet start a fresh GOP (an IDR / IRAP, or carries a
+// parameter set)? Handles both Annex-B (00 00 01 start codes) and 4-byte
+// length-prefixed framing, H.264 and H.265.
+bool packet_is_keyframe(const std::string& fmt, const uint8_t* d, size_t n) {
+    const bool h265 = fmt.find("265") != std::string::npos || fmt.find("hevc") != std::string::npos;
+    auto nal_is_key = [&](const uint8_t* p, size_t len) {
+        if (len < 1) return false;
+        if (h265) {
+            int t = (p[0] >> 1) & 0x3F;
+            return (t >= 16 && t <= 21) || t == 32 || t == 33; // BLA/IDR/CRA, VPS, SPS
+        }
+        int t = p[0] & 0x1F;
+        return t == 5 || t == 7; // IDR slice, SPS
+    };
+    const bool annexb = n >= 4 && d[0] == 0 && d[1] == 0 &&
+                        (d[2] == 1 || (d[2] == 0 && d[3] == 1));
+    if (annexb) {
+        for (size_t p = 0; p + 3 < n;) {
+            if (d[p] == 0 && d[p + 1] == 0 && d[p + 2] == 1) {
+                if (nal_is_key(d + p + 3, n - p - 3)) return true;
+                p += 3;
+            } else if (p + 4 < n && d[p] == 0 && d[p + 1] == 0 && d[p + 2] == 0 && d[p + 3] == 1) {
+                if (nal_is_key(d + p + 4, n - p - 4)) return true;
+                p += 4;
+            } else {
+                ++p;
+            }
+        }
+        return false;
+    }
+    for (size_t i = 0; i + 4 <= n;) {
+        uint32_t len = ((uint32_t)d[i] << 24) | ((uint32_t)d[i + 1] << 16) |
+                       ((uint32_t)d[i + 2] << 8) | d[i + 3];
+        i += 4;
+        if (len == 0 || i + len > n) break;
+        if (nal_is_key(d + i, len)) return true;
+        i += len;
+    }
+    return false;
+}
+
+// Pull the Annex-B parameter-set NALs (SPS/PPS, plus VPS for H.265), each with
+// its start code, out of a packet — usable as decoder extradata. Empty if the
+// packet carries no SPS.
+std::vector<uint8_t> extract_param_sets(const std::string& fmt, const uint8_t* d, size_t n) {
+    const bool h265 = fmt.find("265") != std::string::npos || fmt.find("hevc") != std::string::npos;
+    auto is_param = [&](uint8_t b0) {
+        int t = h265 ? ((b0 >> 1) & 0x3F) : (b0 & 0x1F);
+        return h265 ? (t == 32 || t == 33 || t == 34) : (t == 7 || t == 8);
+    };
+    if (!(n >= 4 && d[0] == 0 && d[1] == 0 && (d[2] == 1 || (d[2] == 0 && d[3] == 1))))
+        return {};
+    std::vector<uint8_t> out;
+    bool has_sps = false;
+    for (size_t p = 0; p + 3 < n;) {
+        size_t sc = 0;
+        if (d[p] == 0 && d[p + 1] == 0 && d[p + 2] == 1)
+            sc = 3;
+        else if (p + 4 < n && d[p] == 0 && d[p + 1] == 0 && d[p + 2] == 0 && d[p + 3] == 1)
+            sc = 4;
+        if (sc == 0) { ++p; continue; }
+        size_t nal = p + sc;
+        // find the next start code = end of this NAL
+        size_t e = nal;
+        for (; e + 3 <= n; ++e)
+            if (d[e] == 0 && d[e + 1] == 0 && (d[e + 2] == 1 || (e + 3 < n && d[e + 3] == 1)))
+                break;
+        if (e + 3 > n) e = n;
+        if (nal < n && is_param(d[nal])) {
+            int t = h265 ? ((d[nal] >> 1) & 0x3F) : (d[nal] & 0x1F);
+            if ((h265 && t == 33) || (!h265 && t == 7)) has_sps = true;
+            out.insert(out.end(), d + p, d + e);
+        }
+        p = e;
+    }
+    return has_sps ? out : std::vector<uint8_t>{};
+}
 } // namespace
 
 Playback::Playback() = default;
@@ -57,6 +135,7 @@ void Playback::close() {
     topics_.clear();
     video_topics_.clear();
     history_preloaded_.store(false);
+    video_keyframes_.clear();
     std::lock_guard<std::mutex> lk(frames_mutex_);
     latest_frames_.clear();
     msg_counts_.clear();
@@ -69,11 +148,26 @@ void Playback::close() {
 
 void Playback::preload_history() {
     history_preloaded_.store(false);
+    video_keyframes_.clear();
     reader_.read_messages(reader_.start_time_us(), 0, [&](const McapMessage& m) -> bool {
         if (should_stop_.load()) return false;
-        if (is_imu_topic(m.topic) || m.topic == "/audio") dispatch(m);
+        if (is_imu_topic(m.topic) || m.topic == "/audio") {
+            dispatch(m);
+        } else if (is_video_topic(m.topic)) {
+            DecodedCompressedVideo v;
+            if (decode_compressed_video(m.data, v) && !v.data.empty()) {
+                if (packet_is_keyframe(v.format, v.data.data(), v.data.size()))
+                    video_keyframes_[m.topic].push_back(m.timestamp_us);
+                auto dit = decoders_.find(m.topic);
+                if (dit != decoders_.end() && dit->second) {
+                    auto ex = extract_param_sets(v.format, v.data.data(), v.data.size());
+                    if (!ex.empty()) dit->second->set_extradata(ex.data(), (int)ex.size());
+                }
+            }
+        }
         return true;
     });
+    for (auto& [_, kfs] : video_keyframes_) std::sort(kfs.begin(), kfs.end());
     // dispatch() also bumps msg_counts_; the preload scan isn't playback, so
     // reset them and let the playback thread re-accumulate as it actually runs.
     {
@@ -254,7 +348,9 @@ void Playback::dispatch(const McapMessage& msg) {
 }
 
 void Playback::do_seek_catchup(uint64_t target_us) {
-    for (auto& [_, d] : decoders_) d->reset();
+    // flush (not reset): drop buffered frames + reference state but keep the
+    // SPS/PPS the decoder learned in-band, so replaying from any keyframe works.
+    for (auto& [_, d] : decoders_) d->flush();
     if (!history_preloaded_.load()) {
         // Rebuild IMU history cleanly for the window around the new position
         // (a backward seek would otherwise leave stale future samples).
@@ -263,7 +359,18 @@ void Playback::do_seek_catchup(uint64_t target_us) {
         imu_hist_.clear();
         audio_hist_.clear();
     }
-    uint64_t from_us = reader_.seekable_start_time_us(target_us);
+    // Start from the last keyframe at or before the target — the earliest one
+    // across topics, so every camera has a keyframe within [from_us, target].
+    // (Falls back to a chunk-aligned start if keyframes weren't collected.)
+    uint64_t from_us = 0;
+    bool have_kf = false;
+    for (const auto& [topic, kfs] : video_keyframes_) {
+        auto it = std::upper_bound(kfs.begin(), kfs.end(), target_us);
+        if (it == kfs.begin()) continue;
+        uint64_t kf = *(it - 1);
+        if (!have_kf || kf < from_us) { from_us = kf; have_kf = true; }
+    }
+    if (!have_kf) from_us = reader_.seekable_start_time_us(target_us);
     if (from_us > target_us) from_us = target_us;
 
     // Run the whole window through the decoder without emitting a single
@@ -272,7 +379,8 @@ void Playback::do_seek_catchup(uint64_t target_us) {
     // (or, near the file start, the first packet after it); decode just
     // that one at the end so the panel updates exactly once.
     const uint64_t tail_fwd_us = 120'000;
-    std::map<std::string, DecodedCompressedVideo> want; // topic -> packet to show
+    std::map<std::string, DecodedCompressedVideo> want; // topic -> packet to decode+show
+    std::map<std::string, DecodedCompressedVideo> next; // topic -> first packet past target
 
     reader_.read_messages(from_us, target_us + tail_fwd_us, [&](const McapMessage& m) -> bool {
         if (should_stop_.load() || seek_pending_.load()) return false;
@@ -290,11 +398,32 @@ void Playback::do_seek_catchup(uint64_t target_us) {
                 dit->second->decode_discard(it->second.format, it->second.data.data(),
                                             (int)it->second.data.size());
             want[m.topic] = std::move(v);
-        } else if (want.find(m.topic) == want.end()) {
-            want[m.topic] = std::move(v); // nothing before target — fall back to the next frame
+        } else if (next.find(m.topic) == next.end()) {
+            next[m.topic] = std::move(v);
         }
         return true;
     });
+
+    // Cameras aren't co-timestamped: one topic's frame N may sit just before
+    // the target and another's just after. Align every topic to the same
+    // capture — the latest "<= target" frame time — so a scrub lands both
+    // panels on the same moment.
+    uint64_t anchor = 0;
+    for (auto& [t, v] : want) anchor = std::max(anchor, v.timestamp_us);
+    const uint64_t align_tol_us = 25'000;
+    for (auto& [topic, nx] : next) {
+        auto w = want.find(topic);
+        bool advance = (w == want.end()) ||
+                       (nx.timestamp_us > w->second.timestamp_us &&
+                        (anchor == 0 || nx.timestamp_us <= anchor + align_tol_us));
+        if (!advance) continue;
+        auto dit = decoders_.find(topic);
+        if (dit == decoders_.end()) continue;
+        if (w != want.end())
+            dit->second->decode_discard(w->second.format, w->second.data.data(),
+                                        (int)w->second.data.size());
+        want[topic] = std::move(nx);
+    }
 
     for (auto& [topic, v] : want) {
         auto dit = decoders_.find(topic);
@@ -313,8 +442,12 @@ void Playback::do_seek_catchup(uint64_t target_us) {
 
 void Playback::playback_loop() {
     using clock = std::chrono::steady_clock;
-    constexpr int64_t kMinSleepUs = 2000;
-    constexpr int64_t kMaxGapUs = 2'000'000;
+    // Lichtblick-style tick loop: advance the clock by (wall time since last
+    // tick x speed), capped, and dispatch the whole batch of messages in that
+    // range at once (no per-message pacing) — so simultaneous frames from
+    // different topics reach the UI together.
+    constexpr int64_t kMaxRangeUs = 300'000;
+    constexpr auto kTickSleep = std::chrono::milliseconds(8);
 
     while (!should_stop_.load()) {
         {
@@ -325,51 +458,44 @@ void Playback::playback_loop() {
         }
         if (should_stop_.load()) break;
 
-        uint64_t start_us = current_time_us_.load();
         if (seek_pending_.exchange(false)) {
-            start_us = pending_seek_us_.load();
-            current_time_us_.store(start_us);
-            do_seek_catchup(start_us);
+            uint64_t t = pending_seek_us_.load();
+            current_time_us_.store(t);
+            do_seek_catchup(t);
+            last_dispatch_ns_.store(clock::now().time_since_epoch().count());
         }
         if (!playing_.load()) continue;
 
-        auto wall_anchor = clock::now();
-        uint64_t rec_anchor_us = start_us;
-        bool interrupted = false;
+        auto last_tick = clock::now();
+        double range_ema_us = 16'000.0;
+        const uint64_t file_end = reader_.end_time_us();
 
-        reader_.read_messages(start_us, 0, [&](const McapMessage& msg) -> bool {
-            if (should_stop_.load() || seek_pending_.load()) { interrupted = true; return false; }
-            bool was_paused = false;
-            while (!playing_.load()) {
-                was_paused = true;
-                if (should_stop_.load() || seek_pending_.load()) { interrupted = true; return false; }
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            }
-            if (was_paused) {
-                wall_anchor = clock::now();
-                rec_anchor_us = msg.timestamp_us;
-            }
-            int64_t rec_elapsed_us = (int64_t)msg.timestamp_us - (int64_t)rec_anchor_us;
-            if (rec_elapsed_us > kMaxGapUs || rec_elapsed_us < 0) {
-                wall_anchor = clock::now();
-                rec_anchor_us = msg.timestamp_us;
-                rec_elapsed_us = 0;
-            }
-            int64_t wall_us = (int64_t)(rec_elapsed_us / speed_.load());
-            auto target = wall_anchor + std::chrono::microseconds(wall_us);
+        while (playing_.load() && !should_stop_.load() && !seek_pending_.load()) {
             auto now = clock::now();
-            if (target - now >= std::chrono::microseconds(kMinSleepUs))
-                std::this_thread::sleep_for(target - now);
+            double dt_us =
+                (double)std::chrono::duration_cast<std::chrono::microseconds>(now - last_tick).count();
+            last_tick = now;
+            double raw = std::min(dt_us * speed_.load(), (double)kMaxRangeUs);
+            range_ema_us = range_ema_us * 0.9 + raw * 0.1;
 
-            dispatch(msg);
-            current_time_us_.store(msg.timestamp_us);
+            uint64_t from = current_time_us_.load();
+            uint64_t to = from + (uint64_t)std::max(1.0, range_ema_us);
+            bool hit_end = to >= file_end;
+            if (hit_end) to = file_end;
+
+            reader_.read_messages(from + 1, to + 1, [&](const McapMessage& m) -> bool {
+                if (should_stop_.load() || seek_pending_.load()) return false;
+                dispatch(m);
+                return true;
+            });
+            current_time_us_.store(to);
             last_dispatch_ns_.store(clock::now().time_since_epoch().count());
-            return true;
-        });
 
-        if (!interrupted && !should_stop_.load() && !seek_pending_.load()) {
-            current_time_us_.store(reader_.end_time_us()); // reached end of file
-            playing_.store(false);
+            if (hit_end) {
+                playing_.store(false);
+                break;
+            }
+            std::this_thread::sleep_for(kTickSleep);
         }
     }
 }

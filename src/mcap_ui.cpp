@@ -1292,13 +1292,14 @@ void panel_splitter(float edge_x, ImVec2 area_pos, float panel_h) {
 void layout(ImVec2 o, ImVec2 sz) {
     if (sz.x <= 0 || sz.y <= 0) return;
 
-    // End of playback: loop back to the start, or stop and let the transport
-    // show its replay control.
-    if (has_file() && g_pb->playing()) {
+    // Loop mode: when playback has run to the end, jump back to the start and
+    // keep going. (Without loop mode the playback loop just stops there and the
+    // transport shows its replay control.)
+    if (has_file() && settings::get().loop_at_end) {
         uint64_t e = g_pb->end_time_us(), s = g_pb->start_time_us();
-        if (e > s && g_pb->current_time_us() + 40'000 >= e) {
-            if (settings::get().loop_at_end) g_pb->seek(s);
-            else g_pb->pause();
+        if (e > s && !g_pb->playing() && g_pb->current_time_us() + 40'000 >= e) {
+            g_pb->seek(s);
+            g_pb->play();
         }
     }
 

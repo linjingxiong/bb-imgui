@@ -6,8 +6,10 @@
 
 #include "video_frame.h"
 
+#include <cstdint>
 #include <mutex>
 #include <string>
+#include <vector>
 
 struct AVCodecContext;
 struct AVCodec;
@@ -29,6 +31,12 @@ public:
     void reset();
     void flush(); // resync at next keyframe, keeping parsed SPS/PPS
 
+    // Out-of-band parameter sets (Annex-B SPS/PPS bytes). When set, every
+    // keyframe decodes standalone — needed for streams whose keyframes don't
+    // carry inline SPS/PPS (so seeks land without "non-existing PPS" errors).
+    // Set before the first decode().
+    void set_extradata(const uint8_t* data, int size);
+
 private:
     bool ensure_codec(const std::string& codec);
     VideoFramePtr frame_to_buffer(const AVFrame* frame) const;
@@ -38,6 +46,7 @@ private:
     const AVCodec* codec_ = nullptr;
     AVCodecContext* ctx_ = nullptr;
     int decode_error_count_ = 0;
+    std::vector<uint8_t> extradata_;
 };
 
 } // namespace mp

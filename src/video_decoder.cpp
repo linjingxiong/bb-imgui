@@ -7,6 +7,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/error.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/mem.h>
 }
 
 namespace mp {
@@ -36,6 +37,18 @@ void VideoDecoder::flush() {
     decode_error_count_ = 0;
 }
 
+void VideoDecoder::set_extradata(const uint8_t* data, int size) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!data || size <= 0) return;
+    std::vector<uint8_t> next(data, data + size);
+    if (next == extradata_) return;
+    extradata_ = std::move(next);
+    // Re-create the context on next decode so avcodec_open2 sees the new params.
+    if (ctx_) avcodec_free_context(&ctx_);
+    codec_ = nullptr;
+    codec_id_ = 0;
+}
+
 bool VideoDecoder::ensure_codec(const std::string& codec) {
     AVCodecID want = codec_id_for(codec);
     if (want == AV_CODEC_ID_NONE) return false;
@@ -46,6 +59,14 @@ bool VideoDecoder::ensure_codec(const std::string& codec) {
     if (!codec_) return false;
     ctx_ = avcodec_alloc_context3(codec_);
     if (!ctx_) { codec_ = nullptr; return false; }
+    if (!extradata_.empty()) {
+        ctx_->extradata =
+            (uint8_t*)av_mallocz(extradata_.size() + AV_INPUT_BUFFER_PADDING_SIZE);
+        if (ctx_->extradata) {
+            std::memcpy(ctx_->extradata, extradata_.data(), extradata_.size());
+            ctx_->extradata_size = (int)extradata_.size();
+        }
+    }
     if (avcodec_open2(ctx_, codec_, nullptr) < 0) {
         avcodec_free_context(&ctx_);
         codec_ = nullptr;
