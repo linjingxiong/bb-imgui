@@ -375,14 +375,14 @@ void Playback::do_seek_catchup(uint64_t target_us) {
 
     // Run the whole window through the decoder without emitting a single
     // intermediate frame (decode_discard advances the P-frame chain only).
-    // For each video topic keep the last packet at or before the target
-    // (or, near the file start, the first packet after it); decode just
-    // that one at the end so the panel updates exactly once.
-    const uint64_t tail_fwd_us = 120'000;
+    // For each video topic keep the last packet at or before the target;
+    // decode just that one at the end so the panel lands exactly on the
+    // target frame and updates exactly once — no forward tail, no "advance
+    // to the next capture" heuristic (both made a scrub overshoot by a frame
+    // or two).
     std::map<std::string, DecodedCompressedVideo> want; // topic -> packet to decode+show
-    std::map<std::string, DecodedCompressedVideo> next; // topic -> first packet past target
 
-    reader_.read_messages(from_us, target_us + tail_fwd_us, [&](const McapMessage& m) -> bool {
+    reader_.read_messages(from_us, target_us + 1, [&](const McapMessage& m) -> bool {
         if (should_stop_.load() || seek_pending_.load()) return false;
         if (!is_video_topic(m.topic)) {
             dispatch(m); // summary / (non-preloaded) imu+audio
@@ -392,38 +392,19 @@ void Playback::do_seek_catchup(uint64_t target_us) {
         if (dit == decoders_.end()) return true;
         DecodedCompressedVideo v;
         if (!decode_compressed_video(m.data, v)) return true;
-        if (v.timestamp_us <= target_us) {
-            auto it = want.find(m.topic);
-            if (it != want.end())
-                dit->second->decode_discard(it->second.format, it->second.data.data(),
-                                            (int)it->second.data.size());
-            want[m.topic] = std::move(v);
-        } else if (next.find(m.topic) == next.end()) {
-            next[m.topic] = std::move(v);
-        }
+        if (v.timestamp_us > target_us) return true;
+        auto it = want.find(m.topic);
+        if (it != want.end())
+            dit->second->decode_discard(it->second.format, it->second.data.data(),
+                                        (int)it->second.data.size());
+        want[m.topic] = std::move(v);
         return true;
     });
 
-    // Cameras aren't co-timestamped: one topic's frame N may sit just before
-    // the target and another's just after. Align every topic to the same
-    // capture — the latest "<= target" frame time — so a scrub lands both
-    // panels on the same moment.
-    uint64_t anchor = 0;
-    for (auto& [t, v] : want) anchor = std::max(anchor, v.timestamp_us);
-    const uint64_t align_tol_us = 25'000;
-    for (auto& [topic, nx] : next) {
-        auto w = want.find(topic);
-        bool advance = (w == want.end()) ||
-                       (nx.timestamp_us > w->second.timestamp_us &&
-                        (anchor == 0 || nx.timestamp_us <= anchor + align_tol_us));
-        if (!advance) continue;
-        auto dit = decoders_.find(topic);
-        if (dit == decoders_.end()) continue;
-        if (w != want.end())
-            dit->second->decode_discard(w->second.format, w->second.data.data(),
-                                        (int)w->second.data.size());
-        want[topic] = std::move(nx);
-    }
+    // A newer seek superseded this one while we were still decoding (rapid
+    // scrub). Drop the result so the panels don't show a trail of
+    // intermediate frames on the way to where the drag finally lands.
+    if (should_stop_.load() || seek_pending_.load()) return;
 
     for (auto& [topic, v] : want) {
         auto dit = decoders_.find(topic);
@@ -488,6 +469,9 @@ void Playback::playback_loop() {
                 dispatch(m);
                 return true;
             });
+            // A seek arrived mid-batch: don't commit this tick's end time —
+            // the seek handler owns the clock now.
+            if (seek_pending_.load() || should_stop_.load()) break;
             current_time_us_.store(to);
             last_dispatch_ns_.store(clock::now().time_since_epoch().count());
 
