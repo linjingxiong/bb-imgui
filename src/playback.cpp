@@ -71,6 +71,32 @@ void Playback::toggle() { playing_.load() ? pause() : play(); }
 
 void Playback::set_speed(float x) { speed_.store(std::clamp(x, 0.25f, 8.0f)); }
 
+void Playback::select_segment(int i) {
+    if (!rec_ || i == rec_->current_segment() || i < 0 || i >= rec_->segment_count()) return;
+    stop_thread();
+    if (!rec_->select_segment(i)) {
+        // leave the engine stopped; caller can retry
+        thread_ = std::thread(&Playback::playback_loop, this);
+        return;
+    }
+    start_us_ = rec_->start_time_us();
+    end_us_ = rec_->end_time_us();
+    video_topics_ = rec_->video_channels();
+    topics_ = video_topics_;
+    for (const auto& t : rec_->scalar_channels()) topics_.push_back(t);
+    std::sort(topics_.begin(), topics_.end());
+    {
+        std::lock_guard<std::mutex> lk(frames_mutex_);
+        latest_frames_.clear();
+        shown_count_.clear();
+    }
+    current_time_us_.store(start_us_);
+    playing_.store(false);
+    seek_pending_.store(false);
+    thread_ = std::thread(&Playback::playback_loop, this);
+    seek(start_us_);
+}
+
 void Playback::seek(uint64_t timestamp_us) {
     if (!rec_) return;
     uint64_t clamped = std::clamp(timestamp_us, start_us_, end_us_);
@@ -195,8 +221,9 @@ std::vector<Playback::ImuSample> Playback::imu_history(const std::string& topic)
     std::vector<ImuSample> out;
     out.reserve(src.size());
     for (const auto& s : src)
-        out.push_back({s.t_us, s.dims > 0 ? (double)s.v[0] : 0.0, s.dims > 1 ? (double)s.v[1] : 0.0,
-                       s.dims > 2 ? (double)s.v[2] : 0.0});
+        out.push_back({s.t_us, s.v.size() > 0 ? (double)s.v[0] : 0.0,
+                       s.v.size() > 1 ? (double)s.v[1] : 0.0,
+                       s.v.size() > 2 ? (double)s.v[2] : 0.0});
     return out;
 }
 
@@ -205,8 +232,8 @@ Playback::ImuSample Playback::imu_latest(const std::string& topic) {
     const auto& src = rec_->scalar_history(topic);
     if (src.empty()) return {0, 0, 0, 0};
     const auto& s = src.back();
-    return {s.t_us, s.dims > 0 ? (double)s.v[0] : 0.0, s.dims > 1 ? (double)s.v[1] : 0.0,
-            s.dims > 2 ? (double)s.v[2] : 0.0};
+    return {s.t_us, s.v.size() > 0 ? (double)s.v[0] : 0.0, s.v.size() > 1 ? (double)s.v[1] : 0.0,
+            s.v.size() > 2 ? (double)s.v[2] : 0.0};
 }
 
 std::string Playback::latest_summary(const std::string& topic) {

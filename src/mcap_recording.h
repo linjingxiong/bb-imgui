@@ -28,6 +28,7 @@ public:
     const std::vector<std::string>& scalar_channels() const override { return scalar_topics_; }
     bool has_audio() const override { return has_audio_; }
     VideoChannelInfo video_info(const std::string& ch) const override;
+    ScalarChannelInfo scalar_info(const std::string& ch) const override;
     const std::vector<ScalarSample>& scalar_history(const std::string& ch) const override;
     const std::vector<AudioPoint>& audio_history() const override { return audio_hist_; }
     bool seek_video(uint64_t target_us, const std::function<bool()>& cancelled,

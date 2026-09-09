@@ -119,11 +119,8 @@ void McapRecording::preload() {
             if (!decode_imu_sample(m.data, s)) return true;
             ScalarSample ss;
             ss.t_us = s.timestamp_us ? s.timestamp_us : m.timestamp_us;
-            ss.dims = 3;
-            ss.v[0] = (float)s.x;
-            ss.v[1] = (float)s.y;
-            ss.v[2] = (float)s.z;
-            scalar_hist_[m.topic].push_back(ss);
+            ss.v = {(float)s.x, (float)s.y, (float)s.z};
+            scalar_hist_[m.topic].push_back(std::move(ss));
         } else if (m.topic == "/audio") {
             DecodedRawAudio a;
             if (!decode_raw_audio(m.data, a)) return true;
@@ -190,6 +187,7 @@ VideoChannelInfo McapRecording::video_info(const std::string& ch) const {
     if (it == info_.end()) return out;
     const StreamInfo& info = it->second;
     out.valid = true;
+    out.display_name = ch;
     out.width = info.width;
     out.height = info.height;
     out.codec = info.codec;
@@ -199,6 +197,18 @@ VideoChannelInfo McapRecording::video_info(const std::string& ch) const {
         out.fps = (info.frames - 1) / span_s;
         out.bitrate_bps = info.bytes * 8.0 / span_s;
     }
+    return out;
+}
+
+ScalarChannelInfo McapRecording::scalar_info(const std::string& ch) const {
+    ScalarChannelInfo out;
+    if (scalar_hist_.find(ch) == scalar_hist_.end()) return out;
+    out.valid = true;
+    // "/imu/accel" -> "accel"
+    auto slash = ch.find_last_of('/');
+    out.display_name = slash == std::string::npos ? ch : ch.substr(slash + 1);
+    out.dims = 3;
+    out.dim_labels = {"x", "y", "z"};
     return out;
 }
 

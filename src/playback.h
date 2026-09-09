@@ -47,6 +47,13 @@ public:
     uint64_t end_time_us() const { return end_us_; }
     uint64_t current_time_us() const;
 
+    // Playable segments (LeRobot episodes; 1 for MCAP). select() re-preloads
+    // and resets the clock to the new segment's start.
+    int segment_count() const { return rec_ ? rec_->segment_count() : 0; }
+    int current_segment() const { return rec_ ? rec_->current_segment() : 0; }
+    SegmentInfo segment_info(int i) const { return rec_ ? rec_->segment_info(i) : SegmentInfo{}; }
+    void select_segment(int i);
+
     // All channel names (video + scalar), sorted.
     const std::vector<std::string>& topics() const { return topics_; }
     // Just the video channels, sorted.

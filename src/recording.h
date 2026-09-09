@@ -17,20 +17,33 @@ namespace mp {
 
 struct VideoChannelInfo {
     bool valid = false;
+    std::string display_name;   // short label for the panel header
     int width = 0, height = 0;
-    std::string codec;          // "h264" / "h265" / ""
+    std::string codec;          // "h264" / "h265" / "av1" / ""
     double fps = 0.0;           // nominal frame rate
     double bitrate_bps = 0.0;   // average bitrate
     uint64_t frame_count = 0;
 };
 
-// One timestamped scalar/vector reading. IMU accel/gyro use dims 3 (xyz);
-// a LeRobot state/action vector uses dims up to kMaxDims.
-struct ScalarSample {
-    static constexpr int kMaxDims = 6;
-    uint64_t t_us = 0;
+// Metadata for a scalar channel (IMU accel/gyro, a LeRobot state/action vector).
+struct ScalarChannelInfo {
+    bool valid = false;
+    std::string display_name;
     int dims = 0;
-    float v[kMaxDims] = {};
+    std::vector<std::string> dim_labels; // per component (x/y/z, joint names, …)
+};
+
+// One timestamped scalar/vector reading. `v.size() == dims`.
+struct ScalarSample {
+    uint64_t t_us = 0;
+    std::vector<float> v;
+};
+
+// A playable unit within a recording. MCAP / rosbag = one segment (the whole
+// file); a LeRobot dataset = one segment per episode.
+struct SegmentInfo {
+    std::string name;
+    uint64_t duration_us = 0;
 };
 
 // One downsampled mono audio amplitude in [-1, 1] at a log time.
@@ -50,6 +63,15 @@ public:
     virtual const std::vector<std::string>& scalar_channels() const = 0;
     virtual bool has_audio() const = 0;
     virtual VideoChannelInfo video_info(const std::string& ch) const = 0;
+    virtual ScalarChannelInfo scalar_info(const std::string& ch) const = 0;
+
+    // Playable segments. count() is >= 1; MCAP returns 1. select() switches the
+    // active segment — after it, start/end time, channels and history reflect
+    // the new one. Returns false for an out-of-range index.
+    virtual int segment_count() const { return 1; }
+    virtual SegmentInfo segment_info(int i) const { (void)i; return {}; }
+    virtual bool select_segment(int i) { return i == 0; }
+    virtual int current_segment() const { return 0; }
 
     // Whole-recording history, preloaded during open (both formats can do this
     // cheaply — these are small). Returned by const ref; empty for an unknown
