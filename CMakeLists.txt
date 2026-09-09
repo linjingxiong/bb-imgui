@@ -127,6 +127,13 @@ target_link_libraries(ffmpeg INTERFACE
     ${FFMPEG_ROOT}/lib/x64/swscale.lib
     ${FFMPEG_ROOT}/lib/x64/swresample.lib)
 
+# DuckDB (prebuilt, ~37MB dll, git-ignored) — reads the parquet in LeRobot
+# datasets. C API only (duckdb.h); no C++ ABI coupling.
+set(DUCKDB_ROOT ${CMAKE_SOURCE_DIR}/third_party/duckdb/windows)
+add_library(duckdb INTERFACE)
+target_include_directories(duckdb INTERFACE ${DUCKDB_ROOT}/include)
+target_link_libraries(duckdb INTERFACE ${DUCKDB_ROOT}/lib/duckdb.lib)
+
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
@@ -140,6 +147,7 @@ add_executable(bb_imgui
     src/gallery.cpp
     src/logo.cpp
     src/mcap_reader.cpp
+    src/parquet.cpp
     src/video_decoder.cpp
     src/recording.cpp
     src/mcap_recording.cpp
@@ -149,7 +157,7 @@ add_executable(bb_imgui
     src/settings.cpp
 )
 target_link_libraries(bb_imgui PRIVATE imgui glfw wgpu_native nlohmann_json::nlohmann_json
-    mcap ffmpeg)
+    mcap ffmpeg duckdb)
 if(WIN32)
     target_link_libraries(bb_imgui PRIVATE comdlg32) # GetOpenFileNameW
 endif()
@@ -177,3 +185,9 @@ foreach(dll avcodec-58 avformat-58 avutil-56 swscale-5 swresample-3)
                 ${FFMPEG_ROOT}/lib/x64/${dll}.dll $<TARGET_FILE_DIR:bb_imgui>/${dll}.dll
         VERBATIM)
 endforeach()
+
+# DuckDB runtime DLL next to the binary.
+add_custom_command(TARGET bb_imgui POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${DUCKDB_ROOT}/lib/duckdb.dll $<TARGET_FILE_DIR:bb_imgui>/duckdb.dll
+    VERBATIM)

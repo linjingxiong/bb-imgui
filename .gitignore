@@ -6,6 +6,9 @@
 # build with the same avcodec-58/avformat-58/avutil-56/swscale-5/
 # swresample-3 ABI) before building the mcap-player-foxglove branch.
 /third_party/ffmpeg/
+# DuckDB prebuilt (~37MB duckdb.dll) — fetch libduckdb-<platform>-amd64.zip
+# from github.com/duckdb/duckdb/releases into third_party/duckdb/<platform>/.
+/third_party/duckdb/
 *.user
 .vs/
 .cache/
