@@ -1,4 +1,4 @@
-#include "mcap_ui.h"
+#include "player_ui.h"
 
 #include "bb.h"
 #include "fonts.h"
@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
@@ -28,7 +29,7 @@
 #include <commdlg.h>
 #endif
 
-namespace mcap_ui {
+namespace player_ui {
 namespace {
 
 WGPUDevice g_device = nullptr;
@@ -56,8 +57,20 @@ std::string g_featured;    // spotlight-layout main video
 // tab (0 = accel, 1 = gyro, 2 = audio). Only one at a time. Reset on open.
 std::string g_sensor_panel;
 int g_sensor_tab = 0;
-// Per-IMU-topic hidden axes (click the x/y/z legend to toggle). Reset on open.
-std::map<std::string, std::array<bool, 3>> g_axis_hidden;
+// Per scalar-channel: which traces are hidden (click the legend to toggle).
+// Sized to the channel's dim count on first use. Reset on open.
+std::map<std::string, std::vector<bool>> g_axis_hidden;
+
+// Colour for trace `k` of a `dims`-trace scalar channel. First three reuse the
+// axis palette (IMU xyz); beyond that, evenly spaced hues.
+ImVec4 trace_color(int k, int dims) {
+    static const ImVec4 axis[3] = {theme::axis::X, theme::axis::Y, theme::axis::Z};
+    if (dims <= 3 && k < 3) return axis[k];
+    float h = (float)k / (float)std::max(1, dims);
+    float r = 0, g = 0, b = 0;
+    ImGui::ColorConvertHSVtoRGB(h, 0.55f, 0.95f, r, g, b);
+    return ImVec4(r, g, b, 1.0f);
+}
 
 void rotate_all() {
     g_rotation = (g_rotation + 90) % 360;
@@ -238,38 +251,41 @@ ImVec4 fade(const ImVec4& c, float a) { return ImVec4(c.x, c.y, c.z, a); }
 // vertical playhead sweeps across it. RAW values, adaptive symmetric Y scale,
 // faint grid, Y labels, a Blockbench Transform-field style x/y/z readout row
 // (values at the playhead) when inline_legend is set.
-void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topic,
-               bool inline_legend, ImU32 bg) {
+void scalar_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topic,
+                  bool inline_legend, ImU32 bg) {
     const theme::Palette& p = theme::palette();
-    auto hist = g_pb->imu_history(topic);
+    mp::Playback::ScalarSeries ser = g_pb->scalar_series(topic);
+    const auto& hist = ser.samples;
+    int D = std::max(1, ser.dims);
+    static const char* kNum[8] = {"0", "1", "2", "3", "4", "5", "6", "7"};
+    auto val = [&](const mp::ScalarSample& s, int k) -> double {
+        return k < (int)s.v.size() ? (double)s.v[k] : 0.0;
+    };
+    auto label = [&](int k) -> const char* {
+        return k < (int)ser.labels.size() && !ser.labels[k].empty() ? ser.labels[k].c_str()
+                                                                    : kNum[k % 8];
+    };
 
     const uint64_t t0 = g_pb->start_time_us();
     uint64_t t1 = g_pb->end_time_us();
     if (t1 <= t0) t1 = t0 + 1;
     const uint64_t phead = std::clamp<uint64_t>(g_pb->current_time_us(), t0, t1);
 
-    const bool is_gyro = topic.find("gyro") != std::string::npos;
     float& scale = g_imu_scale[topic];
-    if (scale <= 0.0f) scale = is_gyro ? 1.0f : 15.0f;
+    if (scale <= 0.0f) scale = 1.0f;
     for (const auto& s : hist)
-        scale = std::max({scale, (float)std::abs(s.x), (float)std::abs(s.y),
-                          (float)std::abs(s.z)});
+        for (int k = 0; k < D; ++k) scale = std::max(scale, (float)std::abs(val(s, k)));
 
-    // Value at the playhead (last sample at or before it) for the readout row.
-    double lv[3] = {0, 0, 0};
+    std::vector<double> lv(D, 0.0);
     for (const auto& s : hist) {
         if (s.t_us > phead) break;
-        lv[0] = s.x; lv[1] = s.y; lv[2] = s.z;
+        for (int k = 0; k < D; ++k) lv[k] = val(s, k);
     }
 
-    const ImVec4 acol[3] = {kAxisR, kAxisG, kAxisB};
-    static const char* nm[3] = {"x", "y", "z"};
     const int dec = scale >= 10 ? 0 : (scale >= 1 ? 1 : 2);
-    std::array<bool, 3>& hidden = g_axis_hidden[topic]; // click the legend to toggle
+    std::vector<bool>& hidden = g_axis_hidden[topic];
+    if ((int)hidden.size() != D) hidden.assign(D, false);
 
-    // Size the Y-label gutter to the widest label + an equal gap on each side
-    // (window edge <-> labels <-> plot). Labels are right-aligned so the digits
-    // line up on a vertical line regardless of sign / digit count.
     const float LG = 4.0f;
     float lbl_w = 0.0f;
     ImGui::PushFont(nullptr, theme::size::CAPTION);
@@ -280,7 +296,7 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
     }
     ImGui::PopFont();
     const float y_label_w = lbl_w + LG * 2.0f;
-    const float leg_h = inline_legend ? 15.0f : 0.0f; // bottom strip for the x/y/z row
+    const float leg_h = inline_legend ? 15.0f : 0.0f;
     ImVec2 c0(amin.x + y_label_w, amin.y + 4.0f);
     ImVec2 c1(amax.x, amax.y - 4.0f - leg_h);
     dl->AddRectFilled(c0, c1, bg);
@@ -294,12 +310,10 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
     for (int i = 0; i <= 4; ++i) {
         float f = 1.0f - i / 2.0f;
         float gy = c0.y + (c1.y - c0.y) * i / 4.0f;
-        // Emphasise the y=0 baseline (i==2), like Blockbench's graph editor.
         dl->AddLine(ImVec2(c0.x, gy), ImVec2(c1.x, gy), i == 2 ? u32(p.subtle_text) : grid, 1.0f);
         char lbl[16];
         std::snprintf(lbl, sizeof(lbl), "%.*f", dec, f * scale);
         ImVec2 ts = ImGui::CalcTextSize(lbl);
-        // Right-aligned within the [amin.x+LG, c0.x-LG] column.
         dl->AddText(ImVec2(c0.x - LG - ts.x, gy - ts.y * 0.5f), u32(p.subtle_text), lbl);
     }
     ImGui::PopFont();
@@ -312,7 +326,6 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
         return mid - (float)std::clamp(v / scale, -1.0, 1.0) * (c1.y - c0.y) * 0.48f;
     };
 
-    // Hover: a readout cursor + tooltip at the mouse time (Foxglove-style).
     bool hov = ImGui::IsMouseHoveringRect(c0, c1) &&
                !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     int hov_idx = -1;
@@ -325,11 +338,11 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
             if (hist[i].t_us <= ht) hov_idx = i;
             else break;
         }
-        if (hov_idx < 0 && !hist.empty()) hov_idx = 0;
+        if (hov_idx < 0) hov_idx = 0;
     }
 
     // Per-pixel-column decimation: keep the sample with the largest |value|
-    // across the 3 axes in each x pixel, so spikes survive the whole-file view.
+    // across all traces in each x pixel, so spikes survive the whole-file view.
     const int cols = std::max(1, (int)(c1.x - c0.x));
     std::vector<int> rep(cols, -1);
     for (int idx = 0; idx < (int)hist.size(); ++idx) {
@@ -337,48 +350,44 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
         if (s.t_us < t0 || s.t_us > t1) continue;
         int cx = std::clamp((int)(X(s.t_us) - c0.x), 0, cols - 1);
         if (rep[cx] < 0) { rep[cx] = idx; continue; }
-        const auto& r = hist[rep[cx]];
-        double sm = std::max({std::abs(s.x), std::abs(s.y), std::abs(s.z)});
-        double rm = std::max({std::abs(r.x), std::abs(r.y), std::abs(r.z)});
+        double sm = 0, rm = 0;
+        for (int k = 0; k < D; ++k) {
+            sm = std::max(sm, std::abs(val(s, k)));
+            rm = std::max(rm, std::abs(val(hist[rep[cx]], k)));
+        }
         if (sm > rm) rep[cx] = idx;
     }
 
     dl->PushClipRect(c0, c1, true);
-    for (int axis = 0; axis < 3; ++axis) {
-        if (hidden[axis]) continue;
-        ImU32 col = u32(fade(acol[axis], 0.9f));
+    for (int k = 0; k < D; ++k) {
+        if (hidden[k]) continue;
+        ImU32 col = u32(fade(trace_color(k, D), 0.9f));
         bool have = false;
         ImVec2 prev;
         for (int cx = 0; cx < cols; ++cx) {
             if (rep[cx] < 0) continue;
             const auto& s = hist[rep[cx]];
-            double raw = axis == 0 ? s.x : axis == 1 ? s.y : s.z;
-            ImVec2 pt(X(s.t_us), Y(raw));
+            ImVec2 pt(X(s.t_us), Y(val(s, k)));
             if (have) dl->AddLine(prev, pt, col, 1.0f);
             prev = pt;
             have = true;
         }
     }
-    // Playhead: a subtle vertical line at the current playback position.
     float hx = std::clamp(X(phead), c0.x, c1.x);
     dl->AddLine(ImVec2(hx, c0.y), ImVec2(hx, c1.y), u32(fade(p.light, 0.55f)), 1.0f);
-    // Hover cursor: a brighter line at the mouse time + a dot per visible axis.
     if (hov_idx >= 0) {
         float chx = std::clamp(X(hist[hov_idx].t_us), c0.x, c1.x);
         dl->AddLine(ImVec2(chx, c0.y), ImVec2(chx, c1.y), u32(fade(p.light, 0.9f)), 1.0f);
-        const auto& s = hist[hov_idx];
-        for (int axis = 0; axis < 3; ++axis) {
-            if (hidden[axis]) continue;
-            double raw = axis == 0 ? s.x : axis == 1 ? s.y : s.z;
-            dl->AddCircleFilled(ImVec2(chx, Y(raw)), 2.5f, u32(acol[axis]));
-        }
+        for (int k = 0; k < D; ++k)
+            if (!hidden[k])
+                dl->AddCircleFilled(ImVec2(chx, Y(val(hist[hov_idx], k))), 2.5f,
+                                    u32(trace_color(k, D)));
     }
     dl->PopClipRect();
 
-    // Hover tooltip (foreground, unclipped): time + x/y/z at the hovered sample.
+    // Hover tooltip (foreground, unclipped): time + every trace value.
     if (hov_idx >= 0) {
         const auto& s = hist[hov_idx];
-        const double hvv[3] = {s.x, s.y, s.z};
         uint64_t rel = s.t_us > t0 ? s.t_us - t0 : 0;
         char tb[24];
         std::snprintf(tb, sizeof(tb), "%llu:%02llu.%03llu",
@@ -387,13 +396,15 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
                       (unsigned long long)(rel / 1000ull % 1000ull));
         ImGui::PushFont(nullptr, theme::size::CAPTION);
         float lh = ImGui::GetTextLineHeight();
-        char rb[3][32];
+        std::vector<std::string> rb(D);
         float tw = ImGui::CalcTextSize(tb).x;
-        for (int a = 0; a < 3; ++a) {
-            std::snprintf(rb[a], sizeof(rb[a]), "%s % .*f", nm[a], scale >= 10 ? 2 : 3, hvv[a]);
-            tw = std::max(tw, 14.0f + ImGui::CalcTextSize(rb[a]).x);
+        char buf[48];
+        for (int k = 0; k < D; ++k) {
+            std::snprintf(buf, sizeof(buf), "%s % .*f", label(k), scale >= 10 ? 2 : 3, val(s, k));
+            rb[k] = buf;
+            tw = std::max(tw, 14.0f + ImGui::CalcTextSize(rb[k].c_str()).x);
         }
-        float bw = tw + 16.0f, bh = lh * 4.0f + 12.0f;
+        float bw = tw + 16.0f, bh = lh * (D + 1) + 12.0f;
         ImVec2 m = ImGui::GetIO().MousePos;
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         ImVec2 bp(m.x + 16.0f, m.y - bh - 10.0f);
@@ -404,40 +415,40 @@ void imu_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, const std::string& topi
         fg->AddRectFilled(bp, ImVec2(bp.x + bw, bp.y + bh), u32(fade(p.deep, 0.97f)), 4.0f);
         fg->AddRect(bp, ImVec2(bp.x + bw, bp.y + bh), u32(fade(p.light, 0.20f)), 4.0f, 0, 1.0f);
         fg->AddText(ImVec2(bp.x + 8.0f, bp.y + 5.0f), u32(p.subtle_text), tb);
-        for (int a = 0; a < 3; ++a) {
-            float ry = bp.y + 5.0f + lh * (a + 1);
+        for (int k = 0; k < D; ++k) {
+            float ry = bp.y + 5.0f + lh * (k + 1);
             fg->AddRectFilled(ImVec2(bp.x + 8.0f, ry + 3.0f), ImVec2(bp.x + 14.0f, ry + 9.0f),
-                              u32(acol[a]));
-            fg->AddText(ImVec2(bp.x + 18.0f, ry), u32(p.text), rb[a]);
+                              u32(trace_color(k, D)));
+            fg->AddText(ImVec2(bp.x + 18.0f, ry), u32(p.text), rb[k].c_str());
         }
         ImGui::PopFont();
     }
 
-    // x/y/z readout as one horizontal row in the strip below the plot: a small
-    // square in the axis colour + the letter and value in neutral text. Each
-    // entry is clickable — toggles that axis's trace on/off.
+    // Legend / readout row below the plot: a swatch + label + value per trace,
+    // click to toggle that trace.
     if (inline_legend) {
         ImGui::PushFont(nullptr, theme::size::CAPTION);
         const ImVec2 cur_save = ImGui::GetCursorScreenPos();
         ImGui::PushID(topic.c_str());
         float rowy = c1.y + 3.0f;
-        float cw = (amax.x - c0.x) / 3.0f;
-        for (int a = 0; a < 3; ++a) {
-            float sx = c0.x + cw * a + 2.0f;
-            char t[40];
-            std::snprintf(t, sizeof(t), "%s % .*f", nm[a], scale >= 10 ? 2 : 3, lv[a]);
+        float cw = (amax.x - c0.x) / (float)D;
+        for (int k = 0; k < D; ++k) {
+            float sx = c0.x + cw * k + 2.0f;
+            char t[48];
+            std::snprintf(t, sizeof(t), "%s % .*f", label(k), scale >= 10 ? 2 : 3, lv[k]);
             float iw = 10.0f + ImGui::CalcTextSize(t).x;
             ImGui::SetCursorScreenPos(ImVec2(sx, rowy - 1.0f));
-            ImGui::PushID(a);
-            if (ImGui::InvisibleButton("ax", ImVec2(iw, 14.0f))) hidden[a] = !hidden[a];
+            ImGui::PushID(k);
+            if (ImGui::InvisibleButton("ax", ImVec2(std::min(iw, cw), 14.0f)))
+                hidden[k] = !hidden[k];
             bool ih = ImGui::IsItemHovered();
             ImGui::PopID();
             if (ih) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             ImVec2 s0(sx, rowy + 3.0f), s1(sx + 6.0f, rowy + 9.0f);
-            if (hidden[a]) dl->AddRect(s0, s1, u32(acol[a]), 0.0f, 0, 1.0f);
-            else dl->AddRectFilled(s0, s1, u32(acol[a]));
+            if (hidden[k]) dl->AddRect(s0, s1, u32(trace_color(k, D)), 0.0f, 0, 1.0f);
+            else dl->AddRectFilled(s0, s1, u32(trace_color(k, D)));
             dl->AddText(ImVec2(sx + 10.0f, rowy),
-                        u32(hidden[a] ? p.subtle_text : (ih ? p.light : p.text)), t);
+                        u32(hidden[k] ? p.subtle_text : (ih ? p.light : p.text)), t);
         }
         ImGui::PopID();
         ImGui::SetCursorScreenPos(cur_save);
@@ -480,22 +491,26 @@ void audio_chart(ImDrawList* dl, ImVec2 amin, ImVec2 amax, ImU32 bg) {
     dl->AddLine(ImVec2(hx, amin.y), ImVec2(hx, amax.y), u32(fade(p.light, 0.55f)), 1.0f);
 }
 
-// The recording's sensor topics, resolved once per frame for the insets.
-struct SensorTopics {
-    std::string accel, gyro;
+// The recording's sensor tabs for the inset — one per scalar channel plus an
+// audio tab, in a stable order. `topic` is empty for the audio tab.
+struct SensorTab {
+    std::string label;
+    std::string topic;
     bool audio = false;
-    bool any() const { return !accel.empty() || !gyro.empty() || audio; }
-    int first() const { return !accel.empty() ? 0 : !gyro.empty() ? 1 : 2; }
 };
-SensorTopics sensor_topics() {
-    SensorTopics st;
+struct SensorTabs {
+    std::vector<SensorTab> tabs;
+    bool any() const { return !tabs.empty(); }
+};
+SensorTabs sensor_tabs() {
+    SensorTabs st;
     if (!has_file()) return st;
-    for (const auto& t : g_pb->topics()) {
-        if (t.rfind("/imu/", 0) != 0) continue;
-        if (t.find("gyro") != std::string::npos) st.gyro = t;
-        else st.accel = t;
+    for (const auto& t : g_pb->scalar_topics()) {
+        std::string name = g_pb->scalar_series(t).name;
+        if (!name.empty()) name[0] = (char)std::toupper((unsigned char)name[0]);
+        st.tabs.push_back({name.empty() ? t : name, t, false});
     }
-    st.audio = g_pb->has_audio();
+    if (g_pb->has_audio()) st.tabs.push_back({"Audio", "", true});
     return st;
 }
 
@@ -665,29 +680,31 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     }
 
     // ── Sensor inset (bottom-left) ─────────────────────────────────────
-    SensorTopics st = sensor_topics();
+    SensorTabs st = sensor_tabs();
     if (st.any() && csz.x > 260.0f && csz.y > 220.0f) {
         ImGui::PushID((topic + "sns").c_str());
         ImU32 chip_bg = u32(fade(p.deep, 0.72f));
+        if (g_sensor_tab >= (int)st.tabs.size()) g_sensor_tab = 0;
+        const char* chip_label = st.tabs.size() > 1 ? "PLOTS" : st.tabs[0].label.c_str();
 
         if (g_sensor_panel != topic) {
-            // Not this panel's turn — a small "IMU" chip to open it here.
+            // Not this panel's turn — a small chip to open the plots here.
             ImGui::PushFont(nullptr, theme::size::CAPTION);
-            float tw2 = ImGui::CalcTextSize("IMU").x;
+            float tw2 = ImGui::CalcTextSize(chip_label).x;
             ImVec2 q0(std::floor(c0.x + 8.0f), std::floor(c0.y + csz.y - 8.0f - 22.0f));
             ImVec2 q1(std::floor(q0.x + 22.0f + tw2 + 8.0f), q0.y + 22.0f);
             ImGui::SetCursorScreenPos(q0);
             ImGui::InvisibleButton("chip", ImVec2(q1.x - q0.x, 22.0f));
             bool hov = ImGui::IsItemHovered();
             if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            if (ImGui::IsItemClicked()) { g_sensor_panel = topic; g_sensor_tab = st.first(); }
+            if (ImGui::IsItemClicked()) { g_sensor_panel = topic; g_sensor_tab = 0; }
             dl->AddRectFilled(q0, q1, chip_bg, 4.0f);
             dl->AddRect(q0, q1, u32(fade(p.light, 0.15f)), 4.0f, 0, 1.0f);
             icon_centered(dl, ICON_TIMELINE, ImVec2(q0.x, q0.y), ImVec2(q0.x + 22.0f, q1.y), 14.0f,
                           u32(hov ? p.light : p.subtle_text));
             dl->AddText(ImVec2(q0.x + 22.0f,
                                std::floor(q0.y + (22.0f - ImGui::GetTextLineHeight()) * 0.5f)),
-                        u32(hov ? p.light : p.text), "IMU");
+                        u32(hov ? p.light : p.text), chip_label);
             ImGui::PopFont();
         } else {
             float iw = std::floor(std::clamp(csz.x * 0.42f, 220.0f, 310.0f));
@@ -705,37 +722,31 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
             const ImU32 cbg = u32(fade(p.frame, 0.9f)); // chart / selected-tab bg
             dl->AddRectFilled(q0, ImVec2(q1.x, q0.y + TB), u32(fade(p.ui, 0.85f)), 5.0f,
                               ImDrawFlags_RoundCornersTop);
-            struct Tab { const char* name; int kind; bool on; };
-            Tab tabs[3] = {{"Acc", 0, !st.accel.empty()},
-                           {"Gyro", 1, !st.gyro.empty()},
-                           {"Audio", 2, st.audio}};
             ImGui::PushFont(nullptr, theme::size::SMALL);
             float tx = q0.x;
-            bool first = true;
-            for (auto& tb : tabs) {
-                if (!tb.on) continue;
-                ImVec2 ts = ImGui::CalcTextSize(tb.name);
+            for (int i = 0; i < (int)st.tabs.size(); ++i) {
+                const char* nm = st.tabs[i].label.c_str();
+                ImVec2 ts = ImGui::CalcTextSize(nm);
                 float tbw = 12.0f + ts.x + 12.0f;
                 ImVec2 t0(std::floor(tx), std::floor(q0.y));
                 ImVec2 t1(std::floor(tx + tbw), std::floor(q0.y + TB));
                 ImGui::SetCursorScreenPos(t0);
-                ImGui::PushID(tb.kind);
+                ImGui::PushID(i);
                 ImGui::InvisibleButton("t", ImVec2(tbw, TB));
                 bool th = ImGui::IsItemHovered();
                 if (th) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (ImGui::IsItemClicked()) g_sensor_tab = tb.kind;
+                if (ImGui::IsItemClicked()) g_sensor_tab = i;
                 ImGui::PopID();
-                bool sel = (g_sensor_tab == tb.kind);
+                bool sel = (g_sensor_tab == i);
                 if (sel)
                     dl->AddRectFilled(t0, t1, cbg, 5.0f,
-                                      first ? ImDrawFlags_RoundCornersTopLeft
-                                            : ImDrawFlags_RoundCornersNone);
+                                      i == 0 ? ImDrawFlags_RoundCornersTopLeft
+                                             : ImDrawFlags_RoundCornersNone);
                 ImU32 fg = u32(sel ? p.text : (th ? p.light : p.subtle_text));
                 dl->AddText(ImVec2(std::floor(t0.x + (tbw - ts.x) * 0.5f),
                                    std::floor(t0.y + (TB - ts.y) * 0.5f)),
-                            fg, tb.name);
+                            fg, nm);
                 tx += tbw + 2.0f;
-                first = false;
             }
             ImGui::PopFont();
             // collapse chevron
@@ -747,20 +758,15 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
             if (ImGui::IsItemClicked()) g_sensor_panel.clear();
             icon_centered(dl, ICON_CARET_DOWN, v0, v1, 16.0f, u32(vh ? p.light : p.subtle_text));
 
-            // guard: selected tab's topic vanished
-            if ((g_sensor_tab == 0 && !tabs[0].on) || (g_sensor_tab == 1 && !tabs[1].on) ||
-                (g_sensor_tab == 2 && !tabs[2].on))
-                g_sensor_tab = st.first();
-
-            // ── chart — the exact right-panel chart, over a translucent bg
-            //    (the active tab already names it; legend is inside) ───────
+            // ── chart — over a translucent bg (the active tab names it) ────
             ImVec2 cmin(q0.x + 2.0f, std::floor(q0.y + TB));
             ImVec2 cmax(q1.x - 2.0f, q1.y - 3.0f);
             // Bridge the seam so the selected tab flows straight into the chart
-            // (imu_chart insets its own bg fill by 4px at the top).
+            // (scalar_chart insets its own bg fill by 4px at the top).
             dl->AddRectFilled(ImVec2(cmin.x, q0.y + TB - 1.0f), ImVec2(cmax.x, cmin.y + 6.0f), cbg);
-            if (g_sensor_tab == 2) audio_chart(dl, cmin, cmax, cbg);
-            else imu_chart(dl, cmin, cmax, g_sensor_tab == 1 ? st.gyro : st.accel, true, cbg);
+            const SensorTab& active = st.tabs[std::clamp(g_sensor_tab, 0, (int)st.tabs.size() - 1)];
+            if (active.audio) audio_chart(dl, cmin, cmax, cbg);
+            else scalar_chart(dl, cmin, cmax, active.topic, true, cbg);
         }
         ImGui::PopID();
     }
@@ -820,7 +826,7 @@ void display(ImVec2 pos, ImVec2 size) {
 
     const bool ready = has_file() && !g_pb->video_topics().empty();
     if (!ready) {
-        const char* line1 = has_file() ? "This recording has no /camera/* video." : "No recording open";
+        const char* line1 = has_file() ? "This recording has no video channels." : "No recording open";
         const char* line2 = has_file() ? "" : "Open a .mcap from the rail on the left.";
         ImGui::PushFont(fonts::medium(), theme::size::HEADING);
         ImVec2 t1 = ImGui::CalcTextSize(line1);
@@ -1230,12 +1236,12 @@ void inspector_body() {
 }
 
 // Right-panel wrappers — lay out a rect at the cursor and defer to the
-// shared chart. (imu_chart / audio_chart are the single implementations.)
+// shared chart. (scalar_chart / audio_chart are the single implementations.)
 void imu_plot(const std::string& topic, float height) {
     ImVec2 pos = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
-    imu_chart(ImGui::GetWindowDrawList(), pos, ImVec2(pos.x + w, pos.y + height), topic,
-              /*inline_legend=*/true, u32(theme::palette().frame));
+    scalar_chart(ImGui::GetWindowDrawList(), pos, ImVec2(pos.x + w, pos.y + height), topic,
+                 /*inline_legend=*/true, u32(theme::palette().frame));
     ImGui::Dummy(ImVec2(w, height));
 }
 
@@ -1257,8 +1263,7 @@ void sensors_body() {
         return;
     }
     bool any = false;
-    for (const auto& t : g_pb->topics()) {
-        if (t.rfind("/imu/", 0) != 0) continue;
+    for (const auto& t : g_pb->scalar_topics()) {
         any = true;
         bb::field_label(upper(short_topic(t)).c_str());
         imu_plot(t, 120.0f);
@@ -1413,4 +1418,4 @@ void layout(ImVec2 o, ImVec2 sz) {
     if (panel_w > 0.0f) panel_splitter(panel_pos.x + panel_w, o, sz.y);
 }
 
-} // namespace mcap_ui
+} // namespace player_ui

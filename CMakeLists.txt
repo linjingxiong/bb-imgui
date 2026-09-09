@@ -153,7 +153,7 @@ add_executable(bb_imgui
     src/mcap_recording.cpp
     src/playback.cpp
     src/video_texture.cpp
-    src/mcap_ui.cpp
+    src/player_ui.cpp
     src/settings.cpp
 )
 target_link_libraries(bb_imgui PRIVATE imgui glfw wgpu_native nlohmann_json::nlohmann_json

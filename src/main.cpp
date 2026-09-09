@@ -15,7 +15,7 @@
 #include "gallery.h"
 #include "icons.h"
 #include "logo.h"
-#include "mcap_ui.h"
+#include "player_ui.h"
 #include "playback.h"
 #include "settings.h"
 #include "menu.h"
@@ -350,10 +350,10 @@ int main(int argc, char** argv) {
     ImGui_ImplWGPU_Init(&init_info);
 
     logo::load(g_device, g_queue, 19.0f); // Blockbench wordmark for the title bar
-    mcap_ui::init(g_device, g_queue);
-    if (argc > 1) mcap_ui::open_path(argv[1]); // CLI: bb_imgui <file.mcap> [play]
-    if (argc > 2 && std::strcmp(argv[2], "play") == 0 && mcap_ui::has_file())
-        mcap_ui::playback().play();
+    player_ui::init(g_device, g_queue);
+    if (argc > 1) player_ui::open_path(argv[1]); // CLI: bb_imgui <file.mcap> [play]
+    if (argc > 2 && std::strcmp(argv[2], "play") == 0 && player_ui::has_file())
+        player_ui::playback().play();
 
     const ImVec4 clear = ImVec4(0.157f, 0.173f, 0.204f, 1.0f); // Blockbench "ui"
 
@@ -426,7 +426,7 @@ int main(int argc, char** argv) {
             if (std::strstr(a, "Component gallery"))
                 gallery_open = !gallery_open;
             else if (std::strstr(a, "Open MCAP") || std::strstr(a, "Open Model"))
-                mcap_ui::open_dialog();
+                player_ui::open_dialog();
             else if (std::strcmp(a, "Reload themes") == 0)
                 theme::rescan();
             else {
@@ -456,7 +456,7 @@ int main(int argc, char** argv) {
         } else {
             ImVec2 area_pos, area_size;
             shell::content_rect(&area_pos, &area_size);
-            mcap_ui::layout(area_pos, area_size);
+            player_ui::layout(area_pos, area_size);
         }
 
         shell::end();
@@ -529,7 +529,7 @@ int main(int argc, char** argv) {
             next_frame = now; // fell behind — don't accumulate debt
     }
 
-    mcap_ui::shutdown();
+    player_ui::shutdown();
     ImGui_ImplWGPU_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

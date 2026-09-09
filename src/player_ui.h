@@ -2,7 +2,7 @@
 // button at top), a centre video stage, a bottom transport bar, and a
 // right properties panel with collapsible sections. Wires mp::Playback
 // (the ported EgoViewer engine) to ImGui. All rendering is immediate —
-// call mcap_ui::layout() once per frame from the shell's Minimal chrome.
+// call player_ui::layout() once per frame from the shell's Minimal chrome.
 #pragma once
 
 #include "imgui.h"
@@ -13,7 +13,7 @@ namespace mp {
 class Playback;
 }
 
-namespace mcap_ui {
+namespace player_ui {
 
 // Create the Playback engine + video-texture pool. Call once after wgpu init.
 void init(WGPUDevice device, WGPUQueue queue);
@@ -31,4 +31,4 @@ void layout(ImVec2 origin, ImVec2 size);
 bool has_file();
 mp::Playback& playback();
 
-} // namespace mcap_ui
+} // namespace player_ui

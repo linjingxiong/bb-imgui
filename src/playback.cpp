@@ -20,8 +20,9 @@ bool Playback::open(const std::string& path) {
     end_us_ = rec_->end_time_us();
 
     video_topics_ = rec_->video_channels();
+    scalar_topics_ = rec_->scalar_channels();
     topics_ = video_topics_;
-    for (const auto& t : rec_->scalar_channels()) topics_.push_back(t);
+    for (const auto& t : scalar_topics_) topics_.push_back(t);
     std::sort(topics_.begin(), topics_.end());
 
     current_time_us_.store(start_us_);
@@ -45,6 +46,7 @@ void Playback::close() {
     start_us_ = end_us_ = 0;
     topics_.clear();
     video_topics_.clear();
+    scalar_topics_.clear();
     std::lock_guard<std::mutex> lk(frames_mutex_);
     latest_frames_.clear();
     shown_count_.clear();
@@ -82,8 +84,9 @@ void Playback::select_segment(int i) {
     start_us_ = rec_->start_time_us();
     end_us_ = rec_->end_time_us();
     video_topics_ = rec_->video_channels();
+    scalar_topics_ = rec_->scalar_channels();
     topics_ = video_topics_;
-    for (const auto& t : rec_->scalar_channels()) topics_.push_back(t);
+    for (const auto& t : scalar_topics_) topics_.push_back(t);
     std::sort(topics_.begin(), topics_.end());
     {
         std::lock_guard<std::mutex> lk(frames_mutex_);
@@ -234,6 +237,17 @@ Playback::ImuSample Playback::imu_latest(const std::string& topic) {
     const auto& s = src.back();
     return {s.t_us, s.v.size() > 0 ? (double)s.v[0] : 0.0, s.v.size() > 1 ? (double)s.v[1] : 0.0,
             s.v.size() > 2 ? (double)s.v[2] : 0.0};
+}
+
+Playback::ScalarSeries Playback::scalar_series(const std::string& topic) {
+    ScalarSeries out;
+    if (!rec_) return out;
+    ScalarChannelInfo ci = rec_->scalar_info(topic);
+    out.name = ci.display_name;
+    out.dims = ci.dims;
+    out.labels = ci.dim_labels;
+    out.samples = rec_->scalar_history(topic); // copy — small, immutable after preload
+    return out;
 }
 
 std::string Playback::latest_summary(const std::string& topic) {

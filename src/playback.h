@@ -56,6 +56,8 @@ public:
 
     // All channel names (video + scalar), sorted.
     const std::vector<std::string>& topics() const { return topics_; }
+    // Just the scalar channels (IMU / state / action), sorted.
+    const std::vector<std::string>& scalar_topics() const { return scalar_topics_; }
     // Just the video channels, sorted.
     const std::vector<std::string>& video_topics() const { return video_topics_; }
 
@@ -68,9 +70,20 @@ public:
 
     // One IMU sample (accel or gyro), in the file's own units.
     struct ImuSample { uint64_t t_us; double x, y, z; };
-    // The whole recording's samples for a scalar channel, oldest first.
+    // The whole recording's samples for a scalar channel, oldest first (legacy
+    // xyz view — first 3 dims).
     std::vector<ImuSample> imu_history(const std::string& topic);
     ImuSample imu_latest(const std::string& topic);
+
+    // A scalar channel's metadata + full sample history, in one call — the
+    // sensor chart draws `dims` traces labelled by `labels`.
+    struct ScalarSeries {
+        std::string name;                 // display name
+        int dims = 0;
+        std::vector<std::string> labels;  // per component
+        std::vector<ScalarSample> samples;
+    };
+    ScalarSeries scalar_series(const std::string& topic);
 
     // Rolling mono audio: (timestamp, one downsampled amplitude in [-1,1]).
     using AudioPoint = mp::AudioPoint;
@@ -107,6 +120,7 @@ private:
     uint64_t start_us_ = 0, end_us_ = 0;
     std::vector<std::string> topics_;
     std::vector<std::string> video_topics_;
+    std::vector<std::string> scalar_topics_;
 
     std::mutex frames_mutex_;
     std::map<std::string, VideoFramePtr> latest_frames_;
