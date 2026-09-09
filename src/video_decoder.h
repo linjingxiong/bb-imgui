@@ -17,6 +17,10 @@ struct AVFrame;
 
 namespace mp {
 
+// Copy a decoded AVFrame's planes into a CPU-side VideoFrame (YUV420P / YUV422P
+// downsampled to 4:2:0 / NV12). Shared by VideoDecoder and Mp4Source.
+VideoFramePtr av_frame_to_video_frame(const struct AVFrame* frame);
+
 class VideoDecoder {
 public:
     VideoDecoder();

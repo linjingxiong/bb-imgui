@@ -97,6 +97,10 @@ bool VideoDecoder::ensure_codec(const std::string& codec) {
 }
 
 VideoFramePtr VideoDecoder::frame_to_buffer(const AVFrame* frame) const {
+    return av_frame_to_video_frame(frame);
+}
+
+VideoFramePtr av_frame_to_video_frame(const AVFrame* frame) {
     if (!frame || frame->width <= 0 || frame->height <= 0) return {};
 
     auto copy_plane = [](const uint8_t* src, int src_stride, int w, int h,

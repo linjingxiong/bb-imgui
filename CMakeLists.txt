@@ -149,8 +149,10 @@ add_executable(bb_imgui
     src/mcap_reader.cpp
     src/parquet.cpp
     src/video_decoder.cpp
+    src/mp4_source.cpp
     src/recording.cpp
     src/mcap_recording.cpp
+    src/lerobot_recording.cpp
     src/playback.cpp
     src/video_texture.cpp
     src/player_ui.cpp
