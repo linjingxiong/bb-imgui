@@ -1036,6 +1036,42 @@ void transport(ImVec2 pos, ImVec2 size) {
         x = bp.x + w + 6.0f;
     }
 
+    // ── Episode pill (LeRobot; hidden when the recording is a single segment) ──
+    if (ready && g_pb->segment_count() > 1) {
+        const int n = g_pb->segment_count();
+        const int cur = g_pb->current_segment();
+        char ep[24];
+        std::snprintf(ep, sizeof(ep), "EP %d/%d", cur + 1, n);
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        float sw = ImGui::CalcTextSize(ep).x, w = sw + 18.0f;
+        ImVec2 bp(std::floor(x), cy - 11.0f);
+        ImGui::SetCursorScreenPos(bp);
+        ImGui::PushID("epsel");
+        ImGui::InvisibleButton("b", ImVec2(w, 22.0f));
+        bool hov = ImGui::IsItemHovered();
+        if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (ImGui::IsItemClicked()) ImGui::OpenPopup("epm");
+        float lh = ImGui::GetTextLineHeight();
+        dl->AddText(snap(ImVec2(bp.x, cy - lh * 0.5f)), hov ? c_lit : u32(p.text), ep);
+        icon_centered(dl, ICON_CARET_DOWN, ImVec2(bp.x + sw + 1.0f, bp.y),
+                      ImVec2(bp.x + sw + 15.0f, bp.y + 22.0f), 14.0f, u32(p.subtle_text));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, u32(p.ui));
+        ImGui::PushStyleColor(ImGuiCol_Border, u32(p.border));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(120, 0), ImVec2(200, 320));
+        if (ImGui::BeginPopup("epm")) {
+            for (int i = 0; i < n; ++i) {
+                char l[24];
+                std::snprintf(l, sizeof(l), "Episode %d", i);
+                if (ImGui::Selectable(l, i == cur)) g_pb->select_segment(i);
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleColor(2);
+        ImGui::PopID();
+        ImGui::PopFont();
+        x = bp.x + w + 6.0f;
+    }
+
     if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 23.0f, false, x, 24.0f) && ready)
         g_pb->seek(s);
     x += 24.0f + 2.0f;
