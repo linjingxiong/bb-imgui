@@ -53,6 +53,34 @@ void VideoTexture::update(const VideoFramePtr& frame) {
     ensure_texture(w, h);
     if (!tex_) return;
 
+    rgba_.resize((size_t)w * h * 4);
+
+    // Packed RGB (PNG/JPEG frames) — a straight expand to RGBA, no swscale.
+    if (frame->format == VideoFrame::PixelFormat::Rgb24) {
+        const int ss = frame->strides[0] > 0 ? frame->strides[0] : w * 3;
+        const uint8_t* s = frame->planes[0].data();
+        uint8_t* d = rgba_.data();
+        for (int y = 0; y < h; ++y) {
+            const uint8_t* sr = s + (size_t)y * ss;
+            uint8_t* dr = d + (size_t)y * w * 4;
+            for (int x = 0; x < w; ++x) {
+                dr[x * 4 + 0] = sr[x * 3 + 0];
+                dr[x * 4 + 1] = sr[x * 3 + 1];
+                dr[x * 4 + 2] = sr[x * 3 + 2];
+                dr[x * 4 + 3] = 255;
+            }
+        }
+        WGPUTexelCopyTextureInfo di = {};
+        di.texture = tex_;
+        di.aspect = WGPUTextureAspect_All;
+        WGPUTexelCopyBufferLayout la = {};
+        la.bytesPerRow = (uint32_t)w * 4;
+        la.rowsPerImage = (uint32_t)h;
+        WGPUExtent3D ex = {(uint32_t)w, (uint32_t)h, 1};
+        wgpuQueueWriteTexture(queue_, &di, rgba_.data(), rgba_.size(), &la, &ex);
+        return;
+    }
+
     const int src_fmt = frame->format == VideoFrame::PixelFormat::Nv12
                             ? AV_PIX_FMT_NV12
                             : (frame->full_range ? AV_PIX_FMT_YUVJ420P : AV_PIX_FMT_YUV420P);
@@ -77,7 +105,6 @@ void VideoTexture::update(const VideoFramePtr& frame) {
                              frame->planes[2].data(), nullptr};
     int src_stride[4] = {frame->strides[0], frame->strides[1], frame->strides[2], 0};
 
-    rgba_.resize((size_t)w * h * 4);
     uint8_t* dst[4] = {rgba_.data(), nullptr, nullptr, nullptr};
     int dst_stride[4] = {w * 4, 0, 0, 0};
     sws_scale(sws, src, src_stride, 0, h, dst, dst_stride);

@@ -16,6 +16,9 @@ namespace {
 AVCodecID codec_id_for(const std::string& c) {
     if (c == "h264" || c == "avc1") return AV_CODEC_ID_H264;
     if (c == "h265" || c == "hevc" || c == "hev1") return AV_CODEC_ID_HEVC;
+    if (c == "av1" || c == "av01") return AV_CODEC_ID_AV1;
+    if (c == "png") return AV_CODEC_ID_PNG;
+    if (c == "jpeg" || c == "jpg" || c == "mjpeg") return AV_CODEC_ID_MJPEG;
     return AV_CODEC_ID_NONE;
 }
 } // namespace
@@ -71,13 +74,15 @@ bool VideoDecoder::ensure_codec(const std::string& codec) {
     if (!codec_) return false;
     ctx_ = avcodec_alloc_context3(codec_);
     if (!ctx_) { codec_ = nullptr; return false; }
-    // Slice threading only: it parallelises a single frame's decode across
-    // cores with no frame-reorder delay, so the "feed chunks, take the last
-    // frame" model is unchanged. (Frame threading would be faster still but
-    // buffers N frames before emitting, which breaks that model.)
-    ctx_->thread_count = 0; // auto — one per logical CPU
-    ctx_->thread_type = FF_THREAD_SLICE;
-    ctx_->flags2 |= AV_CODEC_FLAG2_FAST;
+    // Video codecs: slice threading (parallel, no frame-reorder delay) + the
+    // non-compliant speed path. Still-image codecs (PNG/JPEG) decode one whole
+    // frame per call — leave them at defaults so nothing corrupts the output.
+    const bool still = want == AV_CODEC_ID_PNG || want == AV_CODEC_ID_MJPEG;
+    if (!still) {
+        ctx_->thread_count = 0; // auto — one per logical CPU
+        ctx_->thread_type = FF_THREAD_SLICE;
+        ctx_->flags2 |= AV_CODEC_FLAG2_FAST;
+    }
     apply_replay_flags();
     if (!extradata_.empty()) {
         ctx_->extradata =
@@ -152,6 +157,12 @@ VideoFramePtr av_frame_to_video_frame(const AVFrame* frame) {
                    out->planes[0], out->strides[0]);
         copy_plane(frame->data[1], frame->linesize[1], frame->width, frame->height / 2,
                    out->planes[1], out->strides[1]);
+        return out;
+    }
+    if (pix == AV_PIX_FMT_RGB24) { // PNG / JPEG frames from LeRobot image columns
+        out->format = VideoFrame::PixelFormat::Rgb24;
+        copy_plane(frame->data[0], frame->linesize[0], frame->width * 3, frame->height,
+                   out->planes[0], out->strides[0]);
         return out;
     }
     return {};

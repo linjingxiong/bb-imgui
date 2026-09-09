@@ -61,19 +61,27 @@ bool ParquetDB::query(const std::string& sql, Table& out) {
         Column& col = out.cols[c];
         col.name = duckdb_column_name(&res, c);
         const duckdb_type ty = duckdb_column_type(&res, c);
-        const bool is_str = ty == DUCKDB_TYPE_VARCHAR || ty == DUCKDB_TYPE_ENUM ||
-                            ty == DUCKDB_TYPE_BLOB;
-        if (is_str)
+        const bool is_blob = ty == DUCKDB_TYPE_BLOB;
+        const bool is_str = ty == DUCKDB_TYPE_VARCHAR || ty == DUCKDB_TYPE_ENUM;
+        if (is_blob)
+            col.blob.resize(nrow);
+        else if (is_str)
             col.str.resize(nrow);
         else
             col.num.assign(nrow, 0.0);
 
         for (idx_t r = 0; r < nrow; ++r) {
             if (duckdb_value_is_null(&res, c, r)) {
-                if (!is_str) col.num[r] = std::numeric_limits<double>::quiet_NaN();
+                if (!is_str && !is_blob) col.num[r] = std::numeric_limits<double>::quiet_NaN();
                 continue;
             }
-            if (is_str) {
+            if (is_blob) {
+                duckdb_blob b = duckdb_value_blob(&res, c, r);
+                if (b.data && b.size) {
+                    col.blob[r].assign((const uint8_t*)b.data, (const uint8_t*)b.data + b.size);
+                    duckdb_free(b.data);
+                }
+            } else if (is_str) {
                 char* s = duckdb_value_varchar(&res, c, r);
                 if (s) {
                     col.str[r] = s;

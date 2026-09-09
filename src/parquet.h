@@ -21,8 +21,9 @@ public:
 
     struct Column {
         std::string name;
-        std::vector<double> num;      // per row; NaN when null / not numeric
-        std::vector<std::string> str; // per row; "" when null / not a string
+        std::vector<double> num;                  // per row; NaN when null / not numeric
+        std::vector<std::string> str;             // per row; "" when null / not a string
+        std::vector<std::vector<uint8_t>> blob;   // per row; for BLOB columns
     };
     struct Table {
         size_t rows = 0;

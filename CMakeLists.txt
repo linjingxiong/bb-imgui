@@ -150,6 +150,7 @@ add_executable(bb_imgui
     src/parquet.cpp
     src/video_decoder.cpp
     src/mp4_source.cpp
+    src/image_column_source.cpp
     src/recording.cpp
     src/mcap_recording.cpp
     src/lerobot_recording.cpp

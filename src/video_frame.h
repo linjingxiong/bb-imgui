@@ -10,12 +10,12 @@
 namespace mp {
 
 struct VideoFrame {
-    enum class PixelFormat { Yuv420P, Nv12 };
+    enum class PixelFormat { Yuv420P, Nv12, Rgb24 };
 
     PixelFormat format = PixelFormat::Yuv420P;
     int width = 0;
     int height = 0;
-    // Y / U / V (Yuv420P) or Y / interleaved-UV (Nv12); planes[2] unused for Nv12.
+    // Yuv420P: Y/U/V. Nv12: Y / interleaved-UV. Rgb24: packed RGB in planes[0].
     std::vector<uint8_t> planes[3];
     int strides[3] = {0, 0, 0};
     uint64_t timestamp_us = 0;

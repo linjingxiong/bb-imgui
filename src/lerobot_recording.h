@@ -6,6 +6,7 @@
 
 #include "recording.h"
 
+#include "image_column_source.h"
 #include "mp4_source.h"
 
 #include <map>
@@ -38,25 +39,32 @@ public:
     bool select_segment(int i) override;
 
 private:
+    enum class VSrc { Mp4, Image }; // per video channel: mp4 file vs PNG-in-parquet
+
     struct Episode {
         int64_t from_index = 0, to_index = 0; // global row range in the data parquet
         int data_chunk = 0, data_file = 0;
         std::map<std::string, int> vid_chunk, vid_file;
-        std::map<std::string, double> vid_from, vid_to; // seconds
+        std::map<std::string, double> vid_from, vid_to; // seconds (mp4 slice)
         std::string task;
     };
+
+    std::string data_file_path(const Episode& e) const; // resolves a real path
 
     std::string dir_;
     double fps_ = 30.0;
     std::vector<std::string> video_keys_, scalar_keys_;
     std::map<std::string, VideoChannelInfo> vinfo_;
     std::map<std::string, ScalarChannelInfo> sinfo_;
+    std::map<std::string, VSrc> vsrc_kind_;
+    bool episodes_have_video_slices_ = false;
     std::vector<Episode> episodes_;
 
     int cur_ep_ = -1;
     uint64_t seg_len_us_ = 0;
     std::map<std::string, std::vector<ScalarSample>> scalar_hist_;
     std::map<std::string, std::unique_ptr<Mp4Source>> mp4_;
+    std::map<std::string, std::unique_ptr<ImageColumnSource>> img_;
     std::vector<ScalarSample> empty_scalar_;
     std::vector<AudioPoint> no_audio_;
 };
