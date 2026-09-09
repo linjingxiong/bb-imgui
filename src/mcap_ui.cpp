@@ -46,6 +46,7 @@ std::map<std::string, float> g_imu_scale;
 struct View {
     int rot = -1;     // -1 => seed from settings on first use
     int fit = -1;     // -1 => seed; then 0 = contain (letterbox), 1 = cover (fill)
+    int stats = -1;   // -1 => seed (on); then 0 = hide, 1 = show the info overlay
 };
 std::map<std::string, View> g_view;
 std::string g_focus_topic; // panel expanded to fill the stage (temporary)
@@ -88,14 +89,16 @@ ImVec2 snap(ImVec2 v) { return ImVec2(std::floor(v.x + 0.5f), std::floor(v.y + 0
 // Material Symbols render ~10% high against their text metrics, so nudge
 // down; snap the result to a whole pixel to keep the edges crisp.
 void icon_centered(ImDrawList* dl, const char* glyph, ImVec2 box_min, ImVec2 box_max, float px,
-                   ImU32 col) {
+                   ImU32 col, bool bold = false) {
     ImGui::PushFont(fonts::body(), px);
     ImVec2 ts = ImGui::CalcTextSize(glyph);
     float cx = (box_min.x + box_max.x) * 0.5f;
     float cy = (box_min.y + box_max.y) * 0.5f;
-    dl->AddText(ImVec2(std::floor(cx - ts.x * 0.5f + 0.5f),
-                       std::floor(cy - px * 0.5f + px * 0.10f + 0.5f)),
-                col, glyph);
+    ImVec2 gp(std::floor(cx - ts.x * 0.5f + 0.5f), std::floor(cy - px * 0.5f + px * 0.10f + 0.5f));
+    if (bold)
+        for (ImVec2 o : {ImVec2(0.6f, 0), ImVec2(0, 0.6f), ImVec2(0.6f, 0.6f)})
+            dl->AddText(ImVec2(gp.x + o.x, gp.y + o.y), col, glyph);
+    dl->AddText(gp, col, glyph);
     ImGui::PopFont();
 }
 
@@ -518,6 +521,7 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     View& v = g_view[topic];
     if (v.rot < 0) v.rot = g_rotation;
     if (v.fit < 0) v.fit = settings::get().default_fit;
+    if (v.stats < 0) v.stats = 1;
 
     bool focused = (g_focus_topic == topic);
 
@@ -530,9 +534,12 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     // Controls — always shown; Blockbench .panel_control brightens on hover
     // (opacity only, no background) and surfaces a tooltip.
     ImGui::PushID((topic + "vp").c_str());
-    const float ICON = 18.0f;
     float rx = pos.x + size.x - 4.0f;
-    auto hdr_btn = [&](const char* tag, const char* icon, const char* tip, bool active) -> bool {
+    // Per-icon size so the glyphs read the same visual weight: the diagonal
+    // arrows fill their em box, the 3-dot menu is thin, so give the menu a
+    // couple more px.
+    auto hdr_btn = [&](const char* tag, const char* icon, const char* tip, bool active,
+                       float px) -> bool {
         ImVec2 bs(24.0f, 24.0f);
         ImVec2 bp = snap(ImVec2(rx - bs.x, pos.y + (HEAD - bs.y) * 0.5f));
         ImGui::PushID(tag);
@@ -547,41 +554,72 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         }
         ImVec4 c = active ? p.accent
                           : hov ? p.light : ImVec4(p.text.x, p.text.y, p.text.z, 0.8f);
-        icon_centered(dl, icon, bp, bp + bs, ICON, u32(c));
+        icon_centered(dl, icon, bp, bp + bs, px, u32(c), true);
         rx = bp.x;
         return clk;
     };
 
-    if (hdr_btn("more", ICON_MORE_VERT, "Panel menu", ImGui::IsPopupOpen("vset")))
-        ImGui::OpenPopup("vset");
-    if (hdr_btn("set", ICON_SETTINGS, "Panel settings", ImGui::IsPopupOpen("vset")))
+    if (hdr_btn("more", ICON_MORE_VERT, "Panel menu", ImGui::IsPopupOpen("vset"), 20.0f))
         ImGui::OpenPopup("vset");
     if (hdr_btn("exp", focused ? ICON_CLOSE_FULLSCREEN : ICON_OPEN_IN_FULL,
-                focused ? "Exit fullscreen" : "Fullscreen", focused))
+                focused ? "Exit fullscreen" : "Fullscreen", focused, 17.0f))
         g_focus_topic = focused ? std::string() : topic;
 
     ImGui::SetNextWindowPos(ImVec2(pos.x + size.x - 6.0f, pos.y + HEAD + 4.0f), ImGuiCond_Always,
                             ImVec2(1.0f, 0.0f));
+    // Blockbench panel dialog: the plain dark UI slab, no border.
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, u32(p.ui));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
     if (ImGui::BeginPopup("vset")) {
-        ImGui::PushFont(nullptr, theme::size::SMALL);
-        ImGui::Dummy(ImVec2(196.0f, 0.0f)); // establish a stable popup width for segmented()
-        ImGui::TextColored(p.subtle_text, "ROTATION");
-        static const char* ROT[] = {"0\xc2\xb0", "90\xc2\xb0", "180\xc2\xb0", "270\xc2\xb0"};
-        int ri = (((v.rot % 360) + 360) % 360) / 90;
-        if (bb::segmented("rot", &ri, ROT, 4)) v.rot = ri * 90;
-        ImGui::Dummy(ImVec2(0, 6));
-        ImGui::TextColored(p.subtle_text, "FIT");
-        static const char* FIT[] = {"Contain", "Cover"};
-        bb::segmented("fit", &v.fit, FIT, 2);
+        ImDrawList* pdl = ImGui::GetWindowDrawList();
+
+        // No title, no close button — just the toggle rows. Click outside to
+        // dismiss. Blockbench-style row: square checkbox (white outline, white
+        // check, no fill) on the left, body-size label on the right.
+        ImGui::PushFont(nullptr, theme::size::BODY);
+        const float PW = 150.0f;
+        auto check_row = [&](const char* label, bool* val) {
+            const float BOX = 18.0f;
+            ImVec2 rp = ImGui::GetCursorScreenPos();
+            float lh = ImGui::GetTextLineHeight();
+            float rowh = std::max(BOX, lh) + 6.0f;
+            ImGui::InvisibleButton(label, ImVec2(PW, rowh));
+            bool hov = ImGui::IsItemHovered();
+            if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            bool clk = ImGui::IsItemClicked();
+            if (clk) *val = !*val;
+            // checkbox flush left, label flush right, gap between
+            ImVec2 b0(std::floor(rp.x), std::floor(rp.y + (rowh - BOX) * 0.5f));
+            ImVec2 b1(b0.x + BOX, b0.y + BOX);
+            if (*val) {
+                pdl->AddRectFilled(b0, b1, u32(p.light), 2.0f);
+                icon_centered(pdl, ICON_CHECK, b0, b1, 16.0f, u32(p.ui));
+            } else {
+                pdl->AddRect(b0, b1, u32(p.light), 2.0f, 0, 1.8f);
+            }
+            float tw = ImGui::CalcTextSize(label).x;
+            pdl->AddText(ImVec2(std::floor(rp.x + PW - tw), std::floor(rp.y + (rowh - lh) * 0.5f)),
+                         u32(p.light), label);
+            return clk;
+        };
+
+        bool show = v.stats != 0;
+        if (check_row("Info overlay", &show)) v.stats = show ? 1 : 0;
         ImGui::PopFont();
+
         ImGui::EndPopup();
     }
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(1);
     ImGui::PopID();
 
-    // Content: the frame, near-flush to the panel body.
+    // Content: the frame on a black bed (letterbox bars + the pre-decode state
+    // read as black, like a video player).
     ImVec2 c0(pos.x + 2.0f, pos.y + HEAD + 2.0f);
     ImVec2 csz(size.x - 4.0f, size.y - HEAD - 4.0f);
     if (csz.x < 4.0f || csz.y < 4.0f) return;
+    dl->AddRectFilled(c0, ImVec2(c0.x + csz.x, c0.y + csz.y), u32(p.deep)); // #101316
     dl->PushClipRect(c0, ImVec2(c0.x + csz.x, c0.y + csz.y), true);
 
     auto& tex = g_textures[topic];
@@ -600,6 +638,31 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         draw_video(ImVec2(dw, dh), tex->id(), v.rot);
     }
     dl->PopClipRect();
+
+    // ── Info overlay ──────────────────────────────────────────────────────
+    // A single identity chip (top-left, same look as the IMU chip) plus a
+    // small live-time readout (bottom-right). Toggled by the ⋮ menu.
+    if (v.stats && csz.x > 150.0f && csz.y > 96.0f) {
+        mp::Playback::VideoStats vs = g_pb->video_stats(topic);
+        if (vs.valid) {
+            const char* codec = vs.codec.empty() ? "?" : vs.codec.c_str();
+            char id[64];
+            if (vs.width > 0)
+                std::snprintf(id, sizeof(id), "%d\xc3\x97%d \xc2\xb7 %.0f fps \xc2\xb7 %s", vs.width,
+                              vs.height, vs.stream_fps, codec);
+            else
+                std::snprintf(id, sizeof(id), "%.0f fps \xc2\xb7 %s", vs.stream_fps, codec);
+
+            ImGui::PushFont(nullptr, theme::size::SMALL);
+            ImVec2 ts = ImGui::CalcTextSize(id);
+            ImVec2 q0(std::floor(c0.x + 8.0f), std::floor(c0.y + 8.0f));
+            ImVec2 q1(std::floor(q0.x + ts.x + 16.0f), std::floor(q0.y + ts.y + 8.0f));
+            dl->AddRectFilled(q0, q1, u32(fade(p.deep, 0.72f)), 4.0f);
+            dl->AddRect(q0, q1, u32(fade(p.light, 0.15f)), 4.0f, 0, 1.0f);
+            dl->AddText(ImVec2(q0.x + 8.0f, std::floor(q0.y + 4.0f)), u32(p.text), id);
+            ImGui::PopFont();
+        }
+    }
 
     // ── Sensor inset (bottom-left) ─────────────────────────────────────
     SensorTopics st = sensor_topics();
@@ -703,12 +766,21 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     }
 }
 
-// Rotated display aspect (w/h) of a video topic, or 0 if the first frame
-// hasn't been decoded yet.
+// Rotated display aspect (w/h) of a video topic. Falls back to the coded size
+// learned at open() so the layout is stable before the first frame decodes;
+// 0 only if the resolution is genuinely unknown.
 float video_ar(const std::string& topic) {
+    int w = 0, h = 0;
     auto it = g_textures.find(topic);
-    if (it == g_textures.end() || !it->second || !it->second->valid()) return 0.0f;
-    int w = it->second->width(), h = it->second->height();
+    if (it != g_textures.end() && it->second && it->second->valid()) {
+        w = it->second->width();
+        h = it->second->height();
+    }
+    if ((w <= 0 || h <= 0) && has_file()) {
+        auto vs = g_pb->video_stats(topic);
+        w = vs.width;
+        h = vs.height;
+    }
     if (w <= 0 || h <= 0) return 0.0f;
     int rot = g_view.count(topic) ? g_view[topic].rot : g_rotation;
     bool r90 = ((((rot % 360) + 360) % 360) % 180) != 0;
