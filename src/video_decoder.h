@@ -31,6 +31,12 @@ public:
     void reset();
     void flush(); // resync at next keyframe, keeping parsed SPS/PPS
 
+    // While replaying a GOP toward a seek target, skip the in-loop deblocking
+    // filter and any non-reference frames — the intermediate frames only need
+    // to be good enough to serve as references. Turn back off before decoding
+    // the frame that will actually be shown. Safe to call any time.
+    void set_fast_replay(bool on);
+
     // Out-of-band parameter sets (Annex-B SPS/PPS bytes). When set, every
     // keyframe decodes standalone — needed for streams whose keyframes don't
     // carry inline SPS/PPS (so seeks land without "non-existing PPS" errors).
@@ -39,6 +45,7 @@ public:
 
 private:
     bool ensure_codec(const std::string& codec);
+    void apply_replay_flags(); // push fast_replay_ into ctx_; call with mutex_ held
     VideoFramePtr frame_to_buffer(const AVFrame* frame) const;
 
     std::mutex mutex_;
@@ -46,6 +53,7 @@ private:
     const AVCodec* codec_ = nullptr;
     AVCodecContext* ctx_ = nullptr;
     int decode_error_count_ = 0;
+    bool fast_replay_ = false;
     std::vector<uint8_t> extradata_;
 };
 

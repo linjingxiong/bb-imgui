@@ -37,6 +37,18 @@ void VideoDecoder::flush() {
     decode_error_count_ = 0;
 }
 
+void VideoDecoder::apply_replay_flags() {
+    if (!ctx_) return;
+    ctx_->skip_loop_filter = fast_replay_ ? AVDISCARD_ALL : AVDISCARD_DEFAULT;
+    ctx_->skip_frame = fast_replay_ ? AVDISCARD_NONREF : AVDISCARD_DEFAULT;
+}
+
+void VideoDecoder::set_fast_replay(bool on) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    fast_replay_ = on;
+    apply_replay_flags();
+}
+
 void VideoDecoder::set_extradata(const uint8_t* data, int size) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!data || size <= 0) return;
@@ -59,6 +71,14 @@ bool VideoDecoder::ensure_codec(const std::string& codec) {
     if (!codec_) return false;
     ctx_ = avcodec_alloc_context3(codec_);
     if (!ctx_) { codec_ = nullptr; return false; }
+    // Slice threading only: it parallelises a single frame's decode across
+    // cores with no frame-reorder delay, so the "feed chunks, take the last
+    // frame" model is unchanged. (Frame threading would be faster still but
+    // buffers N frames before emitting, which breaks that model.)
+    ctx_->thread_count = 0; // auto — one per logical CPU
+    ctx_->thread_type = FF_THREAD_SLICE;
+    ctx_->flags2 |= AV_CODEC_FLAG2_FAST;
+    apply_replay_flags();
     if (!extradata_.empty()) {
         ctx_->extradata =
             (uint8_t*)av_mallocz(extradata_.size() + AV_INPUT_BUFFER_PADDING_SIZE);

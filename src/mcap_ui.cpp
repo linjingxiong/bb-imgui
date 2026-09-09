@@ -1045,9 +1045,19 @@ void transport(ImVec2 pos, ImVec2 size) {
     // A scrub pauses and leaves the video parked on the target frame — drag
     // to a spot, that's where it stays. Press play to resume.
     if (ImGui::IsItemActivated() && ready && g_pb->playing()) g_pb->pause();
+    // Only send a seek when the target actually moves — holding the handle
+    // still would otherwise fire an identical seek every frame and keep the
+    // playback thread churning catch-ups that never settle.
+    static uint64_t s_last_scrub_target = UINT64_MAX;
     if (scrub_active && ready) {
         float rel = std::clamp((ImGui::GetIO().MousePos.x - scrub_x0) / sw2, 0.0f, 1.0f);
-        g_pb->seek(s + (uint64_t)(rel * span));
+        uint64_t target = s + (uint64_t)(rel * span);
+        if (target != s_last_scrub_target) {
+            s_last_scrub_target = target;
+            g_pb->seek(target);
+        }
+    } else {
+        s_last_scrub_target = UINT64_MAX;
     }
     float px = std::floor(scrub_x0 + sw2 * frac);
     dl->AddRectFilled(ImVec2(scrub_x0, cy - 2.0f), ImVec2(scrub_x1, cy + 2.0f),

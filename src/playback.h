@@ -82,8 +82,22 @@ public:
 private:
     void stop_thread();
     void playback_loop();
-    void dispatch(const McapMessage& msg);
+    void dispatch(const McapMessage& msg); // non-video only (imu / audio / other)
     void do_seek_catchup(uint64_t target_us);
+    // Decode the video packets in [start_us, end_us) for every video topic but
+    // only convert the last packet per topic into a displayed frame — earlier
+    // packets go through decode_discard so the P-frame chain stays intact
+    // without an intermediate YUV copy. Non-video messages are dispatch()ed
+    // inline. Shared by do_seek_catchup and the playback tick loop so a burst
+    // of frames (fast playback, post-hitch catch-up, GOP replay) is handled
+    // identically. Independent topics replay in parallel when there's real
+    // work. `topic_starts` (seek only) skips each topic's packets before its
+    // own start time, so cameras can resume from different points. Returns
+    // topic -> shown packet timestamp; empty if a newer seek / stop superseded
+    // the batch before it painted.
+    std::map<std::string, uint64_t> present_video_batch(
+        uint64_t start_us, uint64_t end_us,
+        const std::map<std::string, uint64_t>* topic_starts = nullptr);
     // Scan the whole file once at open() and pull every /imu/* + /audio sample
     // into imu_hist_/audio_hist_ (they're tiny), so the sensor plots can show
     // the entire recording at once (Foxglove recorded-playback style) rather
@@ -96,6 +110,13 @@ private:
     std::vector<std::string> video_topics_;
 
     std::map<std::string, std::unique_ptr<VideoDecoder>> decoders_;
+    // Per video topic, the log time of the packet the decoder has most recently
+    // consumed (via present_video_batch). do_seek_catchup reads this to decide
+    // whether a new target can be reached by decoding forward from here, or
+    // needs a flush + replay from the keyframe. Only touched on the playback
+    // thread (and its short-lived per-topic replay workers, which write
+    // distinct keys). Keys are created for every video topic in open().
+    std::map<std::string, uint64_t> decoder_pos_us_;
     // Per video topic, the sorted log times of its keyframes (collected during
     // preload_history). do_seek_catchup starts decoding from the last one at
     // or before the target, so a seek only walks a single GOP.
