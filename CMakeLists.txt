@@ -141,6 +141,8 @@ add_executable(bb_imgui
     src/logo.cpp
     src/mcap_reader.cpp
     src/video_decoder.cpp
+    src/recording.cpp
+    src/mcap_recording.cpp
     src/playback.cpp
     src/video_texture.cpp
     src/mcap_ui.cpp
