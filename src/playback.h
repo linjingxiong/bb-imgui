@@ -84,20 +84,27 @@ private:
     void playback_loop();
     void dispatch(const McapMessage& msg); // non-video only (imu / audio / other)
     void do_seek_catchup(uint64_t target_us);
-    // Decode the video packets in [start_us, end_us) for every video topic but
-    // only convert the last packet per topic into a displayed frame — earlier
-    // packets go through decode_discard so the P-frame chain stays intact
-    // without an intermediate YUV copy. Non-video messages are dispatch()ed
-    // inline. Shared by do_seek_catchup and the playback tick loop so a burst
-    // of frames (fast playback, post-hitch catch-up, GOP replay) is handled
-    // identically. Independent topics replay in parallel when there's real
-    // work. `topic_starts` (seek only) skips each topic's packets before its
-    // own start time, so cameras can resume from different points. Returns
-    // topic -> shown packet timestamp; empty if a newer seek / stop superseded
-    // the batch before it painted.
+
+    // How one video topic should be brought up to a seek target.
+    struct TopicReplay {
+        uint64_t start_us; // feed the decoder packets with timestamp >= this
+        bool flush;        // drop the decoder's reference frames first
+    };
+    // Decode the video packets in [read_start_us, read_end_us) for every video
+    // topic but only convert the last packet per topic into a displayed frame —
+    // earlier packets go through decode_discard so the P-frame chain stays
+    // intact without an intermediate YUV copy. Non-video messages are
+    // dispatch()ed inline. Shared by do_seek_catchup and the playback tick loop.
+    // Independent topics replay in parallel when there's real work.
+    //   plan == nullptr : tick-loop mode — every topic, no flush, from read_start.
+    //   plan != nullptr : seek mode — only the listed topics, each from its own
+    //                     start, flushed first if it says so. The flush happens
+    //                     only after the read succeeds, so a batch aborted by a
+    //                     newer seek leaves every decoder untouched.
+    // Returns topic -> shown packet timestamp; empty if stop/seek superseded it.
     std::map<std::string, uint64_t> present_video_batch(
-        uint64_t start_us, uint64_t end_us,
-        const std::map<std::string, uint64_t>* topic_starts = nullptr);
+        uint64_t read_start_us, uint64_t read_end_us,
+        const std::map<std::string, TopicReplay>* plan = nullptr);
     // Scan the whole file once at open() and pull every /imu/* + /audio sample
     // into imu_hist_/audio_hist_ (they're tiny), so the sensor plots can show
     // the entire recording at once (Foxglove recorded-playback style) rather

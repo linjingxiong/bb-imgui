@@ -122,9 +122,9 @@ bool Playback::open(const std::string& path) {
     playing_.store(false);
 
     thread_ = std::thread(&Playback::playback_loop, this);
-    // Decode the frame at the start position right away so the video panels
-    // aren't blank before the first play (Foxglove shows the current frame
-    // even while paused).
+    // Show the current frame right away (Foxglove-style paused preview). Any
+    // camera still inside its undecodable opening GOP stays black until the
+    // scrubber passes its first keyframe.
     seek(reader_.start_time_us());
     return true;
 }
@@ -332,21 +332,22 @@ void Playback::dispatch(const McapMessage& msg) {
 }
 
 std::map<std::string, uint64_t> Playback::present_video_batch(
-    uint64_t start_us, uint64_t end_us, const std::map<std::string, uint64_t>* topic_starts) {
+    uint64_t read_start_us, uint64_t read_end_us,
+    const std::map<std::string, TopicReplay>* plan) {
 
     // Phase 1 — read the window once. Bucket each video topic's packets in log
-    // order; dispatch non-video inline.
+    // order; dispatch non-video inline. Mutates no decoder state, so an abort
+    // here (a newer seek arrived) is a clean no-op.
     std::map<std::string, std::vector<DecodedCompressedVideo>> packets;
-    reader_.read_messages(start_us, end_us, [&](const McapMessage& m) -> bool {
+    reader_.read_messages(read_start_us, read_end_us, [&](const McapMessage& m) -> bool {
         if (should_stop_.load() || seek_pending_.load()) return false;
         if (!is_video_topic(m.topic)) {
             dispatch(m);
             return true;
         }
-        if (topic_starts) {
-            // Seek path: only the listed topics replay, each from its own start.
-            auto s = topic_starts->find(m.topic);
-            if (s == topic_starts->end() || m.timestamp_us < s->second) return true;
+        if (plan) {
+            auto it = plan->find(m.topic);
+            if (it == plan->end() || m.timestamp_us < it->second.start_us) return true;
         }
         {
             std::lock_guard<std::mutex> lk(frames_mutex_);
@@ -362,10 +363,11 @@ std::map<std::string, uint64_t> Playback::present_video_batch(
     std::map<std::string, uint64_t> shown;
     if (should_stop_.load() || seek_pending_.load()) return shown;
 
-    // Phase 2 — replay each topic's chain: decode_discard everything but the
-    // last packet (cutting corners on those — see set_fast_replay), decode the
-    // last one at full quality. Topics use independent decoders, so run them on
-    // separate threads when at least one has a real GOP to grind through.
+    // Phase 2 — replay each topic's chain: (optionally flush first, then)
+    // decode_discard everything but the last packet (cutting corners on those,
+    // see set_fast_replay), decode the last one at full quality. Independent
+    // decoders, so run the topics on separate threads when at least one has a
+    // real GOP to grind through.
     struct Out { VideoFramePtr frame; std::string summary; uint64_t ts = 0; };
     std::vector<std::pair<std::string, std::vector<DecodedCompressedVideo>*>> work;
     bool heavy = false;
@@ -378,17 +380,22 @@ std::map<std::string, uint64_t> Playback::present_video_batch(
 
     auto replay = [&](const std::string& topic, std::vector<DecodedCompressedVideo>& pkts) -> Out {
         VideoDecoder* dec = decoders_.find(topic)->second.get();
+        // Key exists for every video topic (created in open()); each thread
+        // writes a distinct element, so the map access is race-free.
+        uint64_t& pos = decoder_pos_us_.find(topic)->second;
+        if (plan) {
+            auto it = plan->find(topic);
+            if (it != plan->end() && it->second.flush) { dec->flush(); pos = 0; }
+        }
         dec->set_fast_replay(true);
         for (size_t i = 0; i + 1 < pkts.size(); ++i)
             dec->decode_discard(pkts[i].format, pkts[i].data.data(), (int)pkts[i].data.size());
         dec->set_fast_replay(false);
         DecodedCompressedVideo& v = pkts.back();
-        // Key exists for every video topic (created in open()), so this is a
-        // plain assignment — safe for two replay threads on distinct topics.
-        decoder_pos_us_.find(topic)->second = v.timestamp_us;
         Out o;
         auto frame = dec->decode(v.format, v.data.data(), (int)v.data.size());
         if (frame) {
+            pos = v.timestamp_us; // decoder consumed up to here AND we painted it
             frame->timestamp_us = v.timestamp_us;
             char buf[96];
             std::snprintf(buf, sizeof(buf), "%dx%d  %s  '%s'", frame->width, frame->height,
@@ -396,6 +403,11 @@ std::map<std::string, uint64_t> Playback::present_video_batch(
             o.frame = std::move(frame);
             o.summary = buf;
             o.ts = v.timestamp_us;
+        } else {
+            // Decode failed: the decoder dropped its references internally, so
+            // our tracked position is no longer trustworthy — force the next
+            // catch-up to replay from a keyframe.
+            pos = 0;
         }
         return o;
     };
@@ -415,13 +427,9 @@ std::map<std::string, uint64_t> Playback::present_video_batch(
         for (auto& [topic, pv] : work) outs.emplace(topic, replay(topic, *pv));
     }
 
-    // Phase 3 — publish. Always paint what we decoded (as long as we're not
-    // shutting down): every completed batch leaves decoder position == painted
-    // frame for each topic. A newer seek that arrived mid-decode is handled by
-    // the *next* catch-up, which recomputes from the true decoder position and
-    // paints again. Skipping the paint here would let the decoder run ahead of
-    // the screen and break that invariant (a seek to a spot the decoder already
-    // sits on would then never repaint).
+    // Phase 3 — publish. Always paint a completed batch (unless shutting down):
+    // that keeps decoder position == painted frame for every topic, the
+    // invariant the incremental-vs-flush decision in do_seek_catchup relies on.
     if (should_stop_.load()) return shown;
     std::lock_guard<std::mutex> lk(frames_mutex_);
     for (auto& [topic, o] : outs) {
@@ -434,6 +442,10 @@ std::map<std::string, uint64_t> Playback::present_video_batch(
 }
 
 void Playback::do_seek_catchup(uint64_t target_us) {
+    // A newer seek is already queued — skip the expensive work and let the
+    // playback loop come round again for the latest target.
+    if (seek_pending_.load() || should_stop_.load()) return;
+
     if (!history_preloaded_.load()) {
         // Rebuild IMU history cleanly for the window around the new position
         // (a backward seek would otherwise leave stale future samples).
@@ -443,46 +455,41 @@ void Playback::do_seek_catchup(uint64_t target_us) {
         audio_hist_.clear();
     }
 
-    // Decide, per camera, where the replay starts: continue forward from where
-    // the decoder already is when the target is still inside the GOP we've
-    // decoded into (the common case while dragging the scrubber right), else
-    // flush and replay from the keyframe at or before the target.
-    std::map<std::string, uint64_t> starts;
-    uint64_t global_start = target_us;
+    // Plan each camera independently:
+    //  - no keyframe at or before the target → the target is inside this
+    //    camera's undecodable opening GOP; blank the panel, nothing to replay;
+    //  - decoder already sits past this target's keyframe and before the target
+    //    → decode forward from there (a small step — the drag-right case);
+    //  - otherwise flush and replay from the keyframe at or before the target.
+    // The flush itself is deferred into present_video_batch so a superseded seek
+    // touches nothing.
+    std::map<std::string, TopicReplay> plan;
+    uint64_t read_start = target_us;
     for (auto& [topic, dec] : decoders_) {
-        uint64_t kf = 0;
-        bool have_kf = false;
         auto kit = video_keyframes_.find(topic);
-        if (kit != video_keyframes_.end()) {
-            auto it = std::upper_bound(kit->second.begin(), kit->second.end(), target_us);
-            if (it != kit->second.begin()) { kf = *(it - 1); have_kf = true; }
-        }
-        uint64_t cur = decoder_pos_us_.find(topic)->second;
-        if (cur == target_us) continue; // decoder already sits on the target frame
-
-        uint64_t start;
-        if (have_kf && cur >= kf && cur < target_us) {
-            start = cur + 1; // forward within the current GOP — no replay
-        } else {
-            dec->flush(); // keeps SPS/PPS; drops buffered frames + refs
+        bool have_kf = kit != video_keyframes_.end() && !kit->second.empty() &&
+                       kit->second.front() <= target_us;
+        if (!have_kf) {
+            dec->flush();
             decoder_pos_us_.find(topic)->second = 0;
-            start = have_kf ? kf : reader_.seekable_start_time_us(target_us);
+            std::lock_guard<std::mutex> lk(frames_mutex_);
+            latest_frames_.erase(topic);
+            latest_summary_.erase(topic);
+            continue;
         }
-        if (start > target_us) start = target_us;
-        starts[topic] = start;
-        global_start = std::min(global_start, start);
+        uint64_t kf = *(std::upper_bound(kit->second.begin(), kit->second.end(), target_us) - 1);
+        uint64_t cur = decoder_pos_us_.find(topic)->second;
+
+        TopicReplay tr;
+        if (cur > 0 && cur >= kf && cur < target_us)
+            tr = {cur + 1, false}; // forward within the current GOP — no replay
+        else
+            tr = {kf, true};
+        plan[topic] = tr;
+        read_start = std::min(read_start, tr.start_us);
     }
 
-    auto shown = present_video_batch(global_start, target_us + 1, &starts);
-
-    // Every panel should have landed within a GOP of the target. A frame far
-    // behind means the keyframe index or the read range is wrong — surface it
-    // rather than leaving a silently stale picture.
-    for (const auto& [topic, ts] : shown) {
-        if (target_us > ts && target_us - ts > 300'000)
-            std::fprintf(stderr, "seek: %s landed %.3fs before target %.3fs\n",
-                         topic.c_str(), (target_us - ts) / 1e6, target_us / 1e6);
-    }
+    present_video_batch(read_start, target_us + 1, &plan);
 }
 
 void Playback::playback_loop() {
