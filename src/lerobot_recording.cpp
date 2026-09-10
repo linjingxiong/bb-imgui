@@ -342,7 +342,8 @@ SegmentInfo LeRobotRecording::segment_info(int i) const {
     std::snprintf(nm, sizeof(nm), "Episode %d", i);
     s.name = nm;
     const auto& e = episodes_[i];
-    int64_t n = std::max<int64_t>(0, e.to_index - e.from_index);
+    s.task = e.task;
+    int64_t n = e.length > 0 ? e.length : std::max<int64_t>(0, e.to_index - e.from_index);
     s.duration_us = fps_ > 0 ? (uint64_t)(n / fps_ * 1e6) : 0;
     return s;
 }

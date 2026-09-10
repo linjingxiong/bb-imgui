@@ -43,6 +43,7 @@ struct ScalarSample {
 // file); a LeRobot dataset = one segment per episode.
 struct SegmentInfo {
     std::string name;
+    std::string task;         // natural-language task label, if the format has one
     uint64_t duration_us = 0;
 };
 

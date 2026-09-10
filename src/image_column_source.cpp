@@ -72,28 +72,6 @@ bool ImageColumnSource::start(const std::string& parquet_path, const std::string
     win_len_us_ = (uint64_t)(ts_.back() * 1e6);
 
     blobs_.resize(ts_.size());
-
-    // Fetch + decode frame 0 synchronously so the panel updates to the new
-    // episode the moment the switch lands (the loader then fills the rest).
-    {
-        ParquetDB::Table b;
-        std::snprintf(sql, sizeof(sql),
-                      "SELECT %s.bytes AS b FROM read_parquet('%s') "
-                      "WHERE \"episode_index\" = %d AND \"frame_index\" = 0",
-                      qcol(col_).c_str(), sql_path(path_).c_str(), ep_);
-        if (db_.query(sql, b) && b.rows > 0) {
-            const auto* bc = b.col("b");
-            if (bc && !bc->blob.empty() && !bc->blob[0].empty()) {
-                blobs_[0] = bc->blob[0];
-                if (auto f = decode(blobs_[0], 0, dec_)) {
-                    if (w_ == 0) { w_ = f->width; h_ = f->height; }
-                    lru_put(0, f);
-                    bulk_upto_.store(1, std::memory_order_release);
-                }
-            }
-        }
-    }
-
     ok_ = true;
     loader_ = std::thread(&ImageColumnSource::loader_main, this);
     return true;

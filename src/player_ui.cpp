@@ -53,6 +53,7 @@ struct View {
 std::map<std::string, View> g_view;
 std::string g_focus_topic; // panel expanded to fill the stage (temporary)
 std::string g_featured;    // spotlight-layout main video
+std::string g_ep_filter;   // episode-list search text (LeRobot). Reset on open.
 
 // The one video panel (if any) currently showing the sensor inset, and which
 // tab (0 = accel, 1 = gyro, 2 = audio). Only one at a time. Reset on open.
@@ -219,6 +220,7 @@ void rail(ImVec2 pos, ImVec2 size) {
         g_sensor_panel.clear();
         g_focus_topic.clear();
         g_featured.clear();
+        g_ep_filter.clear();
         g_panel_hidden = false;
     }
     rail_sep();
@@ -1063,8 +1065,12 @@ void transport(ImVec2 pos, ImVec2 size) {
         ImGui::SetNextWindowSizeConstraints(ImVec2(120, 0), ImVec2(200, 320));
         if (ImGui::BeginPopup("epm")) {
             for (int i = 0; i < n; ++i) {
-                char l[24];
-                std::snprintf(l, sizeof(l), "Episode %d", i);
+                mp::SegmentInfo si = g_pb->segment_info(i);
+                char l[96];
+                if (si.task.empty())
+                    std::snprintf(l, sizeof(l), "Episode %d", i);
+                else
+                    std::snprintf(l, sizeof(l), "%d  %s", i, si.task.c_str());
                 if (ImGui::Selectable(l, i == cur)) g_pb->select_segment(i);
             }
             ImGui::EndPopup();
@@ -1321,19 +1327,114 @@ void sensors_body() {
 }
 
 // The left dock panel. Sits between the rail and the video stage, toggled by
-// the rail's sidebar button, drag-resizable via panel_splitter. Empty for
-// now — content (device / IMU / audio / colour controls, EgoViewer style) is
-// a later batch; the *_body helpers above stay for that.
+// the rail's sidebar button, drag-resizable via panel_splitter. Hosts the
+// episode list for multi-segment (LeRobot) recordings; otherwise empty
+// (device / IMU / colour controls are a later batch).
 void side_panel(ImVec2 pos, ImVec2 size) {
     const theme::Palette& p = theme::palette();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(pos, pos + size, u32(p.ui));
-    // A slim empty header strip + the border where it meets the stage.
     const float head_h = 34.0f;
     dl->AddLine(ImVec2(pos.x, pos.y + head_h), ImVec2(pos.x + size.x, pos.y + head_h),
                 u32(p.border), 1.0f);
     dl->AddLine(ImVec2(pos.x + size.x, pos.y), ImVec2(pos.x + size.x, pos.y + size.y),
                 u32(p.border), 1.0f);
+
+    const bool ep_list = has_file() && g_pb->segment_count() > 1;
+
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::BeginChild("##sidepanel", size, ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+
+    if (ep_list) {
+        const int n = g_pb->segment_count();
+        const int cur = g_pb->current_segment();
+
+        // Header: "EPISODES" + count.
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        float lh = ImGui::GetTextLineHeight();
+        float hy = std::floor(pos.y + (head_h - lh) * 0.5f);
+        dl->AddText(snap(ImVec2(pos.x + 12, hy)), u32(p.subtle_text), "EPISODES");
+        char cnt[16];
+        std::snprintf(cnt, sizeof(cnt), "%d", n);
+        float cw = ImGui::CalcTextSize(cnt).x;
+        dl->AddText(snap(ImVec2(pos.x + size.x - 12 - cw, hy)), u32(p.subtle_text), cnt);
+        ImGui::PopFont();
+
+        // Search + scrolling list live in a padded inner child.
+        ImGui::SetCursorScreenPos(ImVec2(pos.x + 10, pos.y + head_h + 8));
+        ImGui::BeginChild("##epbody", ImVec2(size.x - 12, size.y - head_h - 14),
+                          ImGuiChildFlags_None);
+
+        bb::search("##epsearch", &g_ep_filter);
+        std::string flt = g_ep_filter;
+        for (char& c : flt)
+            if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+
+        ImGui::Dummy(ImVec2(0, 6));
+        ImGui::BeginChild("##eplist", ImVec2(0, 0), ImGuiChildFlags_None);
+
+        const float ROW_H = 46.0f;
+        for (int i = 0; i < n; ++i) {
+            mp::SegmentInfo si = g_pb->segment_info(i);
+            std::string tl = si.task;
+            for (char& c : tl)
+                if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+            char idbuf[16];
+            std::snprintf(idbuf, sizeof(idbuf), "%d", i);
+            if (!flt.empty() && tl.find(flt) == std::string::npos &&
+                std::string(idbuf).find(flt) == std::string::npos)
+                continue;
+
+            ImVec2 rp = ImGui::GetCursorScreenPos();
+            float rw = ImGui::GetContentRegionAvail().x;
+            ImVec2 rs(rw, ROW_H);
+            ImGui::PushID(i);
+            ImGui::InvisibleButton("row", rs);
+            bool hov = ImGui::IsItemHovered();
+            bool clk = ImGui::IsItemClicked();
+            ImGui::PopID();
+            if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+            const bool sel = i == cur;
+            if (sel)
+                dl->AddRectFilled(rp, rp + rs, u32(p.selected));
+            else if (hov)
+                dl->AddRectFilled(rp, rp + rs, u32(mix(p.ui, p.selected, 0.5f)));
+            if (sel)
+                dl->AddRectFilled(rp, ImVec2(rp.x + 2.0f, rp.y + rs.y), u32(p.accent));
+
+            char num[16];
+            std::snprintf(num, sizeof(num), "# %d", i);
+            char dur[16] = "";
+            if (si.duration_us > 0) {
+                uint64_t sec = si.duration_us / 1'000'000;
+                std::snprintf(dur, sizeof(dur), "%llu:%02llu", (unsigned long long)(sec / 60),
+                              (unsigned long long)(sec % 60));
+            }
+
+            ImGui::PushFont(nullptr, theme::size::SMALL);
+            float slh = ImGui::GetTextLineHeight();
+            dl->AddText(snap(ImVec2(rp.x + 12, rp.y + 7)), u32(p.subtle_text), num);
+            if (dur[0]) {
+                float dw = ImGui::CalcTextSize(dur).x;
+                dl->AddText(snap(ImVec2(rp.x + rw - 12 - dw, rp.y + (ROW_H - slh) * 0.5f)),
+                            u32(p.subtle_text), dur);
+            }
+            ImGui::PopFont();
+
+            const char* label = si.task.empty() ? si.name.c_str() : si.task.c_str();
+            ImVec2 tp = snap(ImVec2(rp.x + 12, rp.y + 7 + slh + 3));
+            ImVec4 clip(tp.x, tp.y, rp.x + rw - (dur[0] ? 44.0f : 12.0f), tp.y + slh + 4);
+            dl->AddText(fonts::body(), theme::size::SMALL, tp,
+                        u32(sel || hov ? p.light : p.text), label, nullptr, 0.0f, &clip);
+
+            if (clk) g_pb->select_segment(i);
+        }
+        ImGui::EndChild();
+        ImGui::EndChild();
+    }
+
+    ImGui::EndChild();
 }
 
 } // namespace
@@ -1416,11 +1517,13 @@ void open_path(const char* utf8_path) {
     g_sensor_panel.clear();
     g_focus_topic.clear();
     g_featured.clear();
+    g_ep_filter.clear();
     g_rotation = settings::get().default_rotation; // panels seed from this
     if (g_pb->open(utf8_path)) {
         std::fprintf(stderr, "mcap: opened %s (%zu topics, %zu video)\n", utf8_path,
                      g_pb->topics().size(), g_pb->video_topics().size());
         g_pb->set_speed(settings::get().default_speed);
+        if (g_pb->segment_count() > 1) g_panel_hidden = false; // reveal the episode list
         if (settings::get().autoplay_on_open) g_pb->play();
     } else {
         std::fprintf(stderr, "mcap: failed to open %s\n", utf8_path);
@@ -1455,6 +1558,20 @@ void panel_splitter(float edge_x, ImVec2 area_pos, float panel_h) {
 
 void layout(ImVec2 o, ImVec2 sz) {
     if (sz.x <= 0 || sz.y <= 0) return;
+
+    // On an episode switch, drop the video textures so panels fall back to the
+    // loading bed instead of holding the previous episode's last frame until
+    // the new one decodes.
+    static int g_last_seg = -1;
+    if (has_file()) {
+        int seg = g_pb->current_segment();
+        if (seg != g_last_seg) {
+            if (g_last_seg != -1) g_textures.clear();
+            g_last_seg = seg;
+        }
+    } else {
+        g_last_seg = -1;
+    }
 
     // Loop mode: when playback has run to the end, jump back to the start and
     // keep going. (Without loop mode the playback loop just stops there and the

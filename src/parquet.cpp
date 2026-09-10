@@ -1,6 +1,7 @@
 #include "parquet.h"
 
 #include <cstdio>
+#include <cstring>
 #include <limits>
 
 #include <duckdb.h>
@@ -50,8 +51,10 @@ bool ParquetDB::query(const std::string& sql, Table& out) {
 
     duckdb_result res;
     if (duckdb_query((duckdb_connection)conn_, sql.c_str(), &res) != DuckDBSuccess) {
-        std::fprintf(stderr, "parquet: query failed: %s\n  sql: %s\n",
-                     duckdb_result_error(&res), sql.c_str());
+        const char* err = duckdb_result_error(&res);
+        // A deliberate interrupt() from another thread isn't an error worth logging.
+        if (!err || !std::strstr(err, "INTERRUPT"))
+            std::fprintf(stderr, "parquet: query failed: %s\n  sql: %s\n", err, sql.c_str());
         duckdb_destroy_result(&res);
         return false;
     }

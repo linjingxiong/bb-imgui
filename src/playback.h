@@ -49,10 +49,15 @@ public:
 
     // Playable segments (LeRobot episodes; 1 for MCAP). select() re-preloads
     // and resets the clock to the new segment's start.
-    int segment_count() const { return rec_ ? rec_->segment_count() : 0; }
-    int current_segment() const { return rec_ ? rec_->current_segment() : 0; }
-    SegmentInfo segment_info(int i) const { return rec_ ? rec_->segment_info(i) : SegmentInfo{}; }
+    int segment_count() const { return (int)segs_.size(); }
+    int current_segment() const { return cur_seg_.load(); }
+    SegmentInfo segment_info(int i) const {
+        return i >= 0 && i < (int)segs_.size() ? segs_[i] : SegmentInfo{};
+    }
     void select_segment(int i);
+    // True while an episode switch is loading in the background (getters serve
+    // cached / empty data, the UI shows the loading bed).
+    bool segment_switching() const { return seg_switching_.load(); }
 
     // All channel names (video + scalar), sorted.
     const std::vector<std::string>& topics() const { return topics_; }
@@ -115,12 +120,23 @@ private:
     // false if a newer seek / stop superseded it before it committed.
     bool advance_to(uint64_t target_us);
 
+    void rebuild_from_rec();     // refresh cached topics / segment / video info from rec_
+
     std::unique_ptr<Recording> rec_;
+    std::mutex rec_mx_;         // guards rec_ rebuild during a background segment switch
     std::string path_;
-    uint64_t start_us_ = 0, end_us_ = 0;
+    std::atomic<uint64_t> start_us_{0}, end_us_{0};
     std::vector<std::string> topics_;
     std::vector<std::string> video_topics_;
     std::vector<std::string> scalar_topics_;
+
+    // Cached so the UI stays responsive while a switch loads in the background.
+    std::vector<SegmentInfo> segs_;
+    std::map<std::string, VideoChannelInfo> vinfo_cache_;
+    std::atomic<int> cur_seg_{0};
+    std::atomic<bool> seg_switching_{false};
+    std::atomic<int> switch_epoch_{0};
+    std::thread switch_thread_;
 
     std::mutex frames_mutex_;
     std::map<std::string, VideoFramePtr> latest_frames_;
