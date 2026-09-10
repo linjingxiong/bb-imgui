@@ -45,7 +45,14 @@ private:
     std::string codec_name_;
     uint64_t from_us_ = 0, win_len_us_ = 0;
     int64_t win_from_pts_ = 0, win_to_pts_ = 0; // stream time_base units, incl. start_time
-    int64_t cursor_pts_ = INT64_MIN;            // last decoded frame's pts, or MIN
+    int64_t cursor_pts_ = INT64_MIN;            // pts of the last *delivered* frame, or MIN
+
+    // One-frame look-ahead: the first decoded frame past the previous target is
+    // kept here instead of being thrown away, so steady forward playback (many
+    // ticks between real frames) neither re-seeks nor re-decodes.
+    VideoFramePtr pending_;
+    int64_t pending_pts_ = INT64_MIN;
+    VideoFramePtr last_delivered_;
 };
 
 } // namespace mp

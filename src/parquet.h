@@ -35,6 +35,10 @@ public:
     // returns false on error.
     bool query(const std::string& sql, Table& out);
 
+    // Cancel an in-flight query from another thread (the running query() call
+    // then returns false). Safe to call any time; no-op if nothing is running.
+    void interrupt();
+
 private:
     void* db_ = nullptr;   // duckdb_database
     void* conn_ = nullptr; // duckdb_connection

@@ -42,7 +42,9 @@ private:
     enum class VSrc { Mp4, Image }; // per video channel: mp4 file vs PNG-in-parquet
 
     struct Episode {
-        int64_t from_index = 0, to_index = 0; // global row range in the data parquet
+        int ep_index = 0;                    // episode_index — the reliable key
+        int length = 0;                      // frame count (from the `length` column)
+        int64_t from_index = 0, to_index = 0; // global row range — unreliable in some datasets
         int data_chunk = 0, data_file = 0;
         std::map<std::string, int> vid_chunk, vid_file;
         std::map<std::string, double> vid_from, vid_to; // seconds (mp4 slice)
@@ -50,8 +52,10 @@ private:
     };
 
     std::string data_file_path(const Episode& e) const; // resolves a real path
+    void build_episode_file_map();                       // episode_index -> data parquet
 
     std::string dir_;
+    std::map<int, std::string> ep_file_;
     double fps_ = 30.0;
     std::vector<std::string> video_keys_, scalar_keys_;
     std::map<std::string, VideoChannelInfo> vinfo_;
@@ -62,6 +66,7 @@ private:
 
     int cur_ep_ = -1;
     uint64_t seg_len_us_ = 0;
+    ParquetDB scalar_db_; // reused across episode switches (no open/close churn)
     std::map<std::string, std::vector<ScalarSample>> scalar_hist_;
     std::map<std::string, std::unique_ptr<Mp4Source>> mp4_;
     std::map<std::string, std::unique_ptr<ImageColumnSource>> img_;

@@ -80,6 +80,9 @@ bool Mp4Source::open(const std::string& path, uint64_t from_us, uint64_t to_us) 
         win_len_us_ = to_us > from_us ? to_us - from_us : 0;
     }
     cursor_pts_ = INT64_MIN;
+    pending_.reset();
+    pending_pts_ = INT64_MIN;
+    last_delivered_.reset();
     ff_ = std::move(ff);
     return true;
 }
@@ -90,39 +93,58 @@ VideoFramePtr Mp4Source::frame_at(uint64_t target_us, const std::function<bool()
     const AVRational us = {1, 1'000'000};
     const int64_t tgt_pts = win_from_pts_ + av_rescale_q((int64_t)target_us, us, st->time_base);
 
-    // Decide: continue forward from the cursor, or seek to the keyframe before
-    // the target. Seek when going backward or jumping more than ~1.5s ahead.
+    // Seek only when going backward or jumping far ahead; otherwise decode
+    // forward from where we left off. The forward-play common case advances a
+    // few ms per tick and is handled without touching the demuxer at all.
     const int64_t fwd_budget = av_rescale_q(1'500'000, us, st->time_base);
-    bool need_seek = cursor_pts_ == INT64_MIN || tgt_pts < cursor_pts_ ||
-                     tgt_pts - cursor_pts_ > fwd_budget;
+    const bool need_seek = cursor_pts_ == INT64_MIN || tgt_pts < cursor_pts_ ||
+                           tgt_pts - cursor_pts_ > fwd_budget;
     if (need_seek) {
-        if (av_seek_frame(ff_->fmt, ff_->vs, tgt_pts, AVSEEK_FLAG_BACKWARD) < 0) {
-            // fall back to a rewind to the window start
+        if (av_seek_frame(ff_->fmt, ff_->vs, tgt_pts, AVSEEK_FLAG_BACKWARD) < 0)
             av_seek_frame(ff_->fmt, ff_->vs, win_from_pts_, AVSEEK_FLAG_BACKWARD);
-        }
         avcodec_flush_buffers(ff_->ctx);
         cursor_pts_ = INT64_MIN;
+        pending_.reset();
+        pending_pts_ = INT64_MIN;
+    } else if (pending_ && pending_pts_ > tgt_pts) {
+        // The next real frame is still ahead — nothing changed on screen.
+        return last_delivered_;
     }
 
     VideoFramePtr best;
     int64_t best_pts = INT64_MIN;
-    bool eof = false;
 
+    // A look-ahead frame we already decoded last call may now be due.
+    if (pending_ && pending_pts_ <= tgt_pts) {
+        best = std::move(pending_);
+        best_pts = pending_pts_;
+        cursor_pts_ = pending_pts_;
+        pending_.reset();
+        pending_pts_ = INT64_MIN;
+    }
+
+    bool overshot = false;
     auto take = [&](AVFrame* f) {
         int64_t pts = f->best_effort_timestamp != AV_NOPTS_VALUE ? f->best_effort_timestamp : f->pts;
         if (pts == AV_NOPTS_VALUE) return;
-        cursor_pts_ = pts;
-        if (pts > tgt_pts) { eof = true; return; } // overshot — stop keeping
-        if (pts < win_from_pts_) return;           // before the episode window
-        if (auto vf = av_frame_to_video_frame(f)) {
-            int64_t rel_us = av_rescale_q(pts - win_from_pts_, st->time_base, us);
-            vf->timestamp_us = (uint64_t)std::max<int64_t>(0, rel_us);
-            best = std::move(vf);
-            best_pts = pts;
+        if (pts < win_from_pts_) return; // before the episode window
+        auto vf = av_frame_to_video_frame(f);
+        if (!vf) return;
+        int64_t rel_us = av_rescale_q(pts - win_from_pts_, st->time_base, us);
+        vf->timestamp_us = (uint64_t)std::max<int64_t>(0, rel_us);
+        if (pts > tgt_pts) { // overshoot — keep as the look-ahead, don't advance the cursor
+            pending_ = std::move(vf);
+            pending_pts_ = pts;
+            overshot = true;
+            return;
         }
+        best = std::move(vf);
+        best_pts = pts;
+        cursor_pts_ = pts;
     };
 
-    while (!eof) {
+    bool eof = false;
+    while (!overshot && !eof) {
         if (cancelled()) return nullptr;
         int r = av_read_frame(ff_->fmt, ff_->pkt);
         if (r < 0) { // EOF: flush the decoder
@@ -130,8 +152,9 @@ VideoFramePtr Mp4Source::frame_at(uint64_t target_us, const std::function<bool()
             while (avcodec_receive_frame(ff_->ctx, ff_->frame) == 0) {
                 take(ff_->frame);
                 av_frame_unref(ff_->frame);
-                if (eof) break;
+                if (overshot) break;
             }
+            eof = true;
             break;
         }
         if (ff_->pkt->stream_index != ff_->vs) { av_packet_unref(ff_->pkt); continue; }
@@ -145,11 +168,13 @@ VideoFramePtr Mp4Source::frame_at(uint64_t target_us, const std::function<bool()
         while (avcodec_receive_frame(ff_->ctx, ff_->frame) == 0) {
             take(ff_->frame);
             av_frame_unref(ff_->frame);
-            if (eof) break;
+            if (overshot) break;
         }
     }
     (void)best_pts;
-    return best;
+    (void)eof;
+    if (best) last_delivered_ = best;
+    return best ? best : last_delivered_;
 }
 
 } // namespace mp

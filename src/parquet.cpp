@@ -34,6 +34,10 @@ ParquetDB::~ParquetDB() {
     }
 }
 
+void ParquetDB::interrupt() {
+    if (conn_) duckdb_interrupt((duckdb_connection)conn_);
+}
+
 const ParquetDB::Column* ParquetDB::Table::col(const std::string& name) const {
     for (const auto& c : cols)
         if (c.name == name) return &c;

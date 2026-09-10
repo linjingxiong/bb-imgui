@@ -44,23 +44,41 @@ LeRobotRecording::~LeRobotRecording() {
     img_.clear();
 }
 
-// Resolve the episode's data parquet. Try the templated name, then fall back
-// to the i-th file in data/chunk-*/ sorted (datasets with 1-based file
-// numbering / a missing file-000).
+// One pass over the data parquets to learn which file holds each episode's
+// rows — some datasets have a broken data/file_index or 1-based file names, so
+// the mapping can't be trusted by name.
+void LeRobotRecording::build_episode_file_map() {
+    ep_file_.clear();
+    std::string glob = dir_;
+    for (auto& c : glob) if (c == '\\') c = '/';
+    glob += "/data/**/*.parquet";
+    ParquetDB db;
+    ParquetDB::Table t;
+    if (db.query("SELECT DISTINCT \"episode_index\" AS ei, filename AS fn FROM read_parquet('" +
+                     sql_path(glob) + "', filename=true)",
+                 t)) {
+        const auto* ei = t.col("ei");
+        const auto* fn = t.col("fn");
+        if (ei && fn)
+            for (size_t r = 0; r < t.rows; ++r) ep_file_[(int)ei->num[r]] = fn->str[r];
+    }
+}
+
 std::string LeRobotRecording::data_file_path(const Episode& e) const {
+    auto it = ep_file_.find(e.ep_index);
+    if (it != ep_file_.end() && fs::exists(it->second)) return it->second;
+    // Fallback: templated name, then the i-th sorted file.
     char buf[256];
     std::snprintf(buf, sizeof(buf), "%s/data/chunk-%03d/file-%03d.parquet", dir_.c_str(),
                   e.data_chunk, e.data_file);
     if (fs::exists(buf)) return buf;
-
-    std::vector<std::string> files;
+    std::vector<std::string> all;
     std::error_code ec;
     for (auto& d : fs::recursive_directory_iterator(dir_ + "/data", ec))
-        if (!ec && d.path().extension() == ".parquet") files.push_back(d.path().string());
-    std::sort(files.begin(), files.end());
-    // episode index within the sorted list
+        if (!ec && d.path().extension() == ".parquet") all.push_back(d.path().string());
+    std::sort(all.begin(), all.end());
     for (int i = 0; i < (int)episodes_.size(); ++i)
-        if (&episodes_[i] == &e && i < (int)files.size()) return files[i];
+        if (&episodes_[i] == &e && i < (int)all.size()) return all[i];
     return buf;
 }
 
@@ -158,6 +176,7 @@ bool LeRobotRecording::open(const std::string& dir) {
     }
 
     std::string sel = "episode_index, dataset_from_index, dataset_to_index, "
+                      "COALESCE(length, 0) AS len, "
                       "COALESCE(\"data/chunk_index\", 0) AS dci, "
                       "COALESCE(\"data/file_index\", 0) AS dfi, "
                       "COALESCE(tasks[1], '') AS task";
@@ -179,6 +198,8 @@ bool LeRobotRecording::open(const std::string& dir) {
     };
     for (size_t r = 0; r < ep.rows; ++r) {
         Episode& e = episodes_[r];
+        e.ep_index = (int)num("episode_index", r);
+        e.length = (int)num("len", r);
         e.from_index = (int64_t)num("dataset_from_index", r);
         e.to_index = (int64_t)num("dataset_to_index", r);
         e.data_chunk = (int)num("dci", r);
@@ -196,6 +217,7 @@ bool LeRobotRecording::open(const std::string& dir) {
                 episodes_.size(), video_keys_.size(), scalar_keys_.size());
     if (episodes_.empty()) return false;
 
+    build_episode_file_map();
     return select_segment(0);
 }
 
@@ -204,15 +226,19 @@ bool LeRobotRecording::select_segment(int i) {
     cur_ep_ = i;
     const Episode& e = episodes_[i];
 
-    const int64_t n_frames = std::max<int64_t>(0, e.to_index - e.from_index);
+    // Row selection keys off episode_index / frame_index: some published
+    // datasets ship a broken dataset_from_index/dataset_to_index (e.g. every
+    // episode clamped to the same range), but episode_index in the data
+    // parquet is always right.
+    int64_t n_frames = e.length > 0 ? e.length : std::max<int64_t>(0, e.to_index - e.from_index);
     seg_len_us_ = fps_ > 0 ? (uint64_t)(n_frames / fps_ * 1e6) : 0;
 
     const std::string file = data_file_path(e);
 
     // Scalar history: read this episode's rows from the data parquet.
     scalar_hist_.clear();
-    if (!scalar_keys_.empty()) {
-        ParquetDB db;
+    if (!scalar_keys_.empty() && scalar_db_.ok()) {
+        ParquetDB& db = scalar_db_;
         std::string sel = "timestamp";
         for (const auto& k : scalar_keys_) {
             int d = sinfo_[k].dims;
@@ -220,12 +246,11 @@ bool LeRobotRecording::select_segment(int i) {
                 sel += ", " + q(k) + "[" + std::to_string(c + 1) + "] AS " + q(k + "|" +
                        std::to_string(c));
         }
-        char where[128];
-        std::snprintf(where, sizeof(where), " WHERE \"index\" >= %lld AND \"index\" < %lld",
-                      (long long)e.from_index, (long long)e.to_index);
+        char where[96];
+        std::snprintf(where, sizeof(where), " WHERE \"episode_index\" = %d", e.ep_index);
         ParquetDB::Table dt;
         if (db.query("SELECT " + sel + " FROM read_parquet('" + sql_path(file) + "')" + where +
-                         " ORDER BY \"index\"",
+                         " ORDER BY \"frame_index\"",
                      dt)) {
             const auto* ts = dt.col("timestamp");
             for (const auto& k : scalar_keys_) {
@@ -244,31 +269,52 @@ bool LeRobotRecording::select_segment(int i) {
         }
     }
 
-    // One source per camera: an mp4 slice, or a PNG-in-parquet column.
+    // Image columns: reuse the existing sources across a switch (keeps their
+    // DuckDB connections + decoders), and (re)open all cameras in parallel.
+    std::vector<std::string> img_keys, mp4_keys;
+    for (const auto& k : video_keys_)
+        (vsrc_kind_[k] == VSrc::Image ? img_keys : mp4_keys).push_back(k);
+
+    for (const auto& k : img_keys) {
+        vinfo_[k].frame_count = (uint64_t)n_frames;
+        if (!img_.count(k)) img_[k] = std::make_unique<ImageColumnSource>();
+    }
+    // drop sources for cameras that no longer exist
+    for (auto it = img_.begin(); it != img_.end();)
+        it = std::find(img_keys.begin(), img_keys.end(), it->first) == img_keys.end()
+                 ? img_.erase(it)
+                 : std::next(it);
+
+    {
+        std::vector<std::thread> ts;
+        const int ep = e.ep_index;
+        for (const auto& k : img_keys) {
+            ImageColumnSource* s = img_[k].get();
+            const int w = vinfo_[k].width, h = vinfo_[k].height;
+            ts.emplace_back([s, file, k, ep, w, h] { s->reopen(file, k, ep, w, h); });
+        }
+        for (auto& t : ts) t.join();
+    }
+    for (const auto& k : img_keys)
+        if (img_[k]->width() > 0) {
+            vinfo_[k].width = img_[k]->width();
+            vinfo_[k].height = img_[k]->height();
+        }
+
+    // mp4 cameras: still recreated (cheap — just avformat_open_input).
     mp4_.clear();
-    img_.clear();
-    for (const auto& k : video_keys_) {
+    for (const auto& k : mp4_keys) {
         VideoChannelInfo& vi = vinfo_[k];
         vi.frame_count = (uint64_t)n_frames;
-        if (vsrc_kind_[k] == VSrc::Image) {
-            auto src = std::make_unique<ImageColumnSource>();
-            if (src->open(file, k, e.from_index, e.to_index)) {
-                if (src->width() > 0) { vi.width = src->width(); vi.height = src->height(); }
-                img_[k] = std::move(src);
-            } else {
-                std::fprintf(stderr, "lerobot: image column '%s' failed to open\n", k.c_str());
-            }
-        } else {
-            auto src = std::make_unique<Mp4Source>();
-            std::string path = video_mp4(dir_, k, e.vid_chunk.count(k) ? e.vid_chunk.at(k) : 0,
-                                         e.vid_file.count(k) ? e.vid_file.at(k) : 0);
-            uint64_t from_us = (uint64_t)((e.vid_from.count(k) ? e.vid_from.at(k) : 0.0) * 1e6);
-            uint64_t to_us = (uint64_t)((e.vid_to.count(k) ? e.vid_to.at(k) : 0.0) * 1e6);
-            if (src->open(path, from_us, to_us)) {
-                if (src->width() > 0) { vi.width = src->width(); vi.height = src->height(); }
-                if (!src->codec().empty()) vi.codec = src->codec();
-                mp4_[k] = std::move(src);
-            }
+        auto src = std::make_unique<Mp4Source>();
+        std::string path = video_mp4(dir_, k, e.vid_chunk.count(k) ? e.vid_chunk.at(k) : 0,
+                                     e.vid_file.count(k) ? e.vid_file.at(k) : 0);
+        uint64_t from_us = (uint64_t)((e.vid_from.count(k) ? e.vid_from.at(k) : 0.0) * 1e6);
+        uint64_t to_us = (uint64_t)((e.vid_to.count(k) ? e.vid_to.at(k) : 0.0) * 1e6);
+        if (src->open(path, from_us, to_us)) {
+            if (src->width() > 0) { vi.width = src->width(); vi.height = src->height(); }
+            if (!src->codec().empty()) vi.codec = src->codec();
+            mp4_[k] = std::move(src);
         }
     }
     return true;
@@ -335,7 +381,11 @@ bool LeRobotRecording::seek_video(uint64_t target_us, const std::function<bool()
     }
 
     if (cancelled()) return false;
-    for (auto& [k, f] : got) out[k] = f; // null => blank
+    // A null frame here means "not decoded yet" (loader still catching up after
+    // a switch), not "blank" — leave the panel showing whatever it had rather
+    // than flashing empty.
+    for (auto& [k, f] : got)
+        if (f) out[k] = f;
     return true;
 }
 
