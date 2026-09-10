@@ -19,8 +19,10 @@ namespace player_ui {
 void init(WGPUDevice device, WGPUQueue queue);
 void shutdown();
 
-// Windows "open file" dialog -> Playback::open(). No-op elsewhere for now.
+// Windows "open file" dialog (*.mcap) -> Playback::open(). No-op elsewhere.
 void open_dialog();
+// Windows "pick folder" dialog (LeRobot dataset dir) -> Playback::open().
+void open_folder_dialog();
 // Open a file by path directly (CLI arg / drag-drop / tests).
 void open_path(const char* utf8_path);
 

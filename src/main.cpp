@@ -45,6 +45,7 @@ const Item SEP{};
 
 const Item FILE_ITEMS[] = {
     {ICON_PHOTO_LIBRARY, "Open MCAP\xe2\x80\xa6"},
+    {ICON_FOLDER_OPEN, "Open LeRobot\xe2\x80\xa6"},
     SEP,
     {ICON_FILE, "New", nullptr, false, true},
     {ICON_HISTORY, "Recent", nullptr, false, true},
@@ -427,6 +428,8 @@ int main(int argc, char** argv) {
                 gallery_open = !gallery_open;
             else if (std::strstr(a, "Open MCAP") || std::strstr(a, "Open Model"))
                 player_ui::open_dialog();
+            else if (std::strstr(a, "Open LeRobot"))
+                player_ui::open_folder_dialog();
             else if (std::strcmp(a, "Reload themes") == 0)
                 theme::rescan();
             else {

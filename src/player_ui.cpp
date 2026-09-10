@@ -27,6 +27,7 @@
 #endif
 #include <windows.h>
 #include <commdlg.h>
+#include <shobjidl.h>
 #endif
 
 namespace player_ui {
@@ -221,7 +222,8 @@ void rail(ImVec2 pos, ImVec2 size) {
         g_panel_hidden = false;
     }
     rail_sep();
-    if (rail_btn(ICON_FOLDER_OPEN, "Open MCAP\xe2\x80\xa6", false)) open_dialog();
+    if (rail_btn(ICON_PHOTO_LIBRARY, "Open MCAP\xe2\x80\xa6", false)) open_dialog();
+    if (rail_btn(ICON_FOLDER_OPEN, "Open LeRobot\xe2\x80\xa6", false)) open_folder_dialog();
     if (rail_btn(ICON_ROTATE, "Rotate video 90\xc2\xb0", false)) rotate_all();
     // The spotlight layout only makes sense with a crowd of cameras.
     if (has_file() && g_pb->video_topics().size() > 4) {
@@ -827,7 +829,8 @@ void display(ImVec2 pos, ImVec2 size) {
     const bool ready = has_file() && !g_pb->video_topics().empty();
     if (!ready) {
         const char* line1 = has_file() ? "This recording has no video channels." : "No recording open";
-        const char* line2 = has_file() ? "" : "Open a .mcap from the rail on the left.";
+        const char* line2 =
+            has_file() ? "" : "Open an MCAP file or a LeRobot dataset from the rail on the left.";
         ImGui::PushFont(fonts::medium(), theme::size::HEADING);
         ImVec2 t1 = ImGui::CalcTextSize(line1);
         dl->AddText(ImVec2(pos.x + (size.x - t1.x) * 0.5f, pos.y + size.y * 0.5f - 24),
@@ -1362,6 +1365,44 @@ void open_dialog() {
     WideCharToMultiByte(CP_UTF8, 0, path, -1, utf8.data(), len, nullptr, nullptr);
 
     open_path(utf8.c_str());
+#endif
+}
+
+void open_folder_dialog() {
+#if defined(_WIN32)
+    // LeRobot datasets are directories, so this is the Explorer-style folder
+    // picker (IFileDialog + FOS_PICKFOLDERS) rather than a file open box.
+    HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool did_init = init == S_OK || init == S_FALSE;
+
+    IFileOpenDialog* dlg = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                   IID_PPV_ARGS(&dlg)))) {
+        FILEOPENDIALOGOPTIONS opts = 0;
+        dlg->GetOptions(&opts);
+        dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        if (SUCCEEDED(dlg->Show(nullptr))) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dlg->GetResult(&item))) {
+                PWSTR wpath = nullptr;
+                // SIGDN_FILESYSTEMPATH — spell the value out; some SDK header
+                // orderings leave the enumerator name undeclared here.
+                const SIGDN kFsPath = static_cast<SIGDN>(0x80058000);
+                if (SUCCEEDED(item->GetDisplayName(kFsPath, &wpath)) && wpath) {
+                    int len = WideCharToMultiByte(CP_UTF8, 0, wpath, -1, nullptr, 0, nullptr,
+                                                  nullptr);
+                    std::string utf8(len > 0 ? len - 1 : 0, '\0');
+                    WideCharToMultiByte(CP_UTF8, 0, wpath, -1, utf8.data(), len, nullptr, nullptr);
+                    CoTaskMemFree(wpath);
+                    open_path(utf8.c_str());
+                }
+                item->Release();
+            }
+        }
+        dlg->Release();
+    }
+
+    if (did_init) CoUninitialize();
 #endif
 }
 

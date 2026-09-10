@@ -162,7 +162,7 @@ add_executable(bb_imgui
 target_link_libraries(bb_imgui PRIVATE imgui glfw wgpu_native nlohmann_json::nlohmann_json
     mcap ffmpeg duckdb)
 if(WIN32)
-    target_link_libraries(bb_imgui PRIVATE comdlg32) # GetOpenFileNameW
+    target_link_libraries(bb_imgui PRIVATE comdlg32 ole32) # GetOpenFileNameW + IFileDialog
 endif()
 
 if(MSVC)
