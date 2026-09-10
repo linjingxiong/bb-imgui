@@ -12,13 +12,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
@@ -54,6 +58,12 @@ std::map<std::string, View> g_view;
 std::string g_focus_topic; // panel expanded to fill the stage (temporary)
 std::string g_featured;    // spotlight-layout main video
 std::string g_ep_filter;   // episode-list search text (LeRobot). Reset on open.
+
+// A dialog pick is stashed here for the next frame's poll_open() to open
+// asynchronously, so the heavy load never runs inside the UI callback.
+std::mutex g_open_mx;
+std::string g_pending_open_path;
+bool g_await_post_open = false; // an async open() is in flight; finish setup when it lands
 
 // The one video panel (if any) currently showing the sensor inset, and which
 // tab (0 = accel, 1 = gyro, 2 = audio). Only one at a time. Reset on open.
@@ -830,9 +840,14 @@ void display(ImVec2 pos, ImVec2 size) {
 
     const bool ready = has_file() && !g_pb->video_topics().empty();
     if (!ready) {
-        const char* line1 = has_file() ? "This recording has no video channels." : "No recording open";
+        const bool loading = g_pb && g_pb->opening();
+        const char* line1 = loading         ? "Opening\xe2\x80\xa6"
+                            : has_file()     ? "This recording has no video channels."
+                                             : "No recording open";
         const char* line2 =
-            has_file() ? "" : "Open an MCAP file or a LeRobot dataset from the rail on the left.";
+            loading || has_file()
+                ? ""
+                : "Open an MCAP file or a LeRobot dataset from the rail on the left.";
         ImGui::PushFont(fonts::medium(), theme::size::HEADING);
         ImVec2 t1 = ImGui::CalcTextSize(line1);
         dl->AddText(ImVec2(pos.x + (size.x - t1.x) * 0.5f, pos.y + size.y * 0.5f - 24),
@@ -1041,45 +1056,7 @@ void transport(ImVec2 pos, ImVec2 size) {
         x = bp.x + w + 6.0f;
     }
 
-    // ── Episode pill (LeRobot; hidden when the recording is a single segment) ──
-    if (ready && g_pb->segment_count() > 1) {
-        const int n = g_pb->segment_count();
-        const int cur = g_pb->current_segment();
-        char ep[24];
-        std::snprintf(ep, sizeof(ep), "EP %d/%d", cur + 1, n);
-        ImGui::PushFont(nullptr, theme::size::SMALL);
-        float sw = ImGui::CalcTextSize(ep).x, w = sw + 18.0f;
-        ImVec2 bp(std::floor(x), cy - 11.0f);
-        ImGui::SetCursorScreenPos(bp);
-        ImGui::PushID("epsel");
-        ImGui::InvisibleButton("b", ImVec2(w, 22.0f));
-        bool hov = ImGui::IsItemHovered();
-        if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        if (ImGui::IsItemClicked()) ImGui::OpenPopup("epm");
-        float lh = ImGui::GetTextLineHeight();
-        dl->AddText(snap(ImVec2(bp.x, cy - lh * 0.5f)), hov ? c_lit : u32(p.text), ep);
-        icon_centered(dl, ICON_CARET_DOWN, ImVec2(bp.x + sw + 1.0f, bp.y),
-                      ImVec2(bp.x + sw + 15.0f, bp.y + 22.0f), 14.0f, u32(p.subtle_text));
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, u32(p.ui));
-        ImGui::PushStyleColor(ImGuiCol_Border, u32(p.border));
-        ImGui::SetNextWindowSizeConstraints(ImVec2(120, 0), ImVec2(200, 320));
-        if (ImGui::BeginPopup("epm")) {
-            for (int i = 0; i < n; ++i) {
-                mp::SegmentInfo si = g_pb->segment_info(i);
-                char l[96];
-                if (si.task.empty())
-                    std::snprintf(l, sizeof(l), "Episode %d", i);
-                else
-                    std::snprintf(l, sizeof(l), "%d  %s", i, si.task.c_str());
-                if (ImGui::Selectable(l, i == cur)) g_pb->select_segment(i);
-            }
-            ImGui::EndPopup();
-        }
-        ImGui::PopStyleColor(2);
-        ImGui::PopID();
-        ImGui::PopFont();
-        x = bp.x + w + 6.0f;
-    }
+    // Episodes are selected from the list in the left dock panel, not here.
 
     if (ico_btn("first", ICON_SKIP_PREVIOUS, "Jump to start", 23.0f, false, x, 24.0f) && ready)
         g_pb->seek(s);
@@ -1443,6 +1420,23 @@ void init(WGPUDevice device, WGPUQueue queue) {
     g_device = device;
     g_queue = queue;
     g_pb = std::make_unique<mp::Playback>();
+
+#if defined(_WIN32)
+    // Warm up the shell file-dialog machinery (windows.storage.dll,
+    // explorerframe.dll, the shell namespace) on a background thread so the
+    // first Open… click doesn't pay a ~1-2s cold load.
+    std::thread([] {
+        if (SUCCEEDED(CoInitializeEx(nullptr,
+                                     COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE))) {
+            IFileOpenDialog* dlg = nullptr;
+            if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                           IID_PPV_ARGS(&dlg))) &&
+                dlg)
+                dlg->Release();
+            CoUninitialize();
+        }
+    }).detach();
+#endif
 }
 
 void shutdown() {
@@ -1450,6 +1444,22 @@ void shutdown() {
     g_pb.reset();
 }
 
+#if defined(_WIN32)
+namespace {
+void stash_pick(const std::wstring& wpath) {
+    if (wpath.empty()) return;
+    int len = WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string utf8(len > 0 ? len - 1 : 0, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), -1, utf8.data(), len, nullptr, nullptr);
+    std::lock_guard<std::mutex> lk(g_open_mx);
+    g_pending_open_path = std::move(utf8);
+}
+} // namespace
+#endif
+
+// The native dialog runs modally on the UI thread (it pops instantly there;
+// the window is briefly "not responding" while it's up, which is normal). The
+// pick is stashed and the actual open() then runs off-thread via poll_open().
 void open_dialog() {
 #if defined(_WIN32)
     wchar_t path[MAX_PATH] = {0};
@@ -1459,23 +1469,14 @@ void open_dialog() {
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (!GetOpenFileNameW(&ofn)) return;
-
-    int len = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
-    std::string utf8(len > 0 ? len - 1 : 0, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, path, -1, utf8.data(), len, nullptr, nullptr);
-
-    open_path(utf8.c_str());
+    if (GetOpenFileNameW(&ofn)) stash_pick(path);
 #endif
 }
 
 void open_folder_dialog() {
 #if defined(_WIN32)
-    // LeRobot datasets are directories, so this is the Explorer-style folder
-    // picker (IFileDialog + FOS_PICKFOLDERS) rather than a file open box.
     HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     const bool did_init = init == S_OK || init == S_FALSE;
-
     IFileOpenDialog* dlg = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
                                    IID_PPV_ARGS(&dlg)))) {
@@ -1486,23 +1487,16 @@ void open_folder_dialog() {
             IShellItem* item = nullptr;
             if (SUCCEEDED(dlg->GetResult(&item))) {
                 PWSTR wpath = nullptr;
-                // SIGDN_FILESYSTEMPATH — spell the value out; some SDK header
-                // orderings leave the enumerator name undeclared here.
-                const SIGDN kFsPath = static_cast<SIGDN>(0x80058000);
+                const SIGDN kFsPath = static_cast<SIGDN>(0x80058000); // SIGDN_FILESYSTEMPATH
                 if (SUCCEEDED(item->GetDisplayName(kFsPath, &wpath)) && wpath) {
-                    int len = WideCharToMultiByte(CP_UTF8, 0, wpath, -1, nullptr, 0, nullptr,
-                                                  nullptr);
-                    std::string utf8(len > 0 ? len - 1 : 0, '\0');
-                    WideCharToMultiByte(CP_UTF8, 0, wpath, -1, utf8.data(), len, nullptr, nullptr);
+                    stash_pick(wpath);
                     CoTaskMemFree(wpath);
-                    open_path(utf8.c_str());
                 }
                 item->Release();
             }
         }
         dlg->Release();
     }
-
     if (did_init) CoUninitialize();
 #endif
 }
@@ -1519,14 +1513,29 @@ void open_path(const char* utf8_path) {
     g_featured.clear();
     g_ep_filter.clear();
     g_rotation = settings::get().default_rotation; // panels seed from this
-    if (g_pb->open(utf8_path)) {
-        std::fprintf(stderr, "mcap: opened %s (%zu topics, %zu video)\n", utf8_path,
-                     g_pb->topics().size(), g_pb->video_topics().size());
-        g_pb->set_speed(settings::get().default_speed);
-        if (g_pb->segment_count() > 1) g_panel_hidden = false; // reveal the episode list
-        if (settings::get().autoplay_on_open) g_pb->play();
-    } else {
-        std::fprintf(stderr, "mcap: failed to open %s\n", utf8_path);
+    g_await_post_open = true;
+    g_pb->open(utf8_path); // async — returns immediately, is_open() flips when loaded
+}
+
+// Consume a path picked by a dialog thread, and finish open-time UI setup once
+// the async open lands. Call once per frame.
+void poll_open() {
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lk(g_open_mx);
+        if (!g_pending_open_path.empty()) std::swap(path, g_pending_open_path);
+    }
+    if (!path.empty()) open_path(path.c_str());
+
+    if (g_await_post_open && g_pb && !g_pb->opening()) {
+        g_await_post_open = false;
+        if (g_pb->is_open()) {
+            std::fprintf(stderr, "opened: %s (%zu topics, %zu video)\n", g_pb->path().c_str(),
+                         g_pb->topics().size(), g_pb->video_topics().size());
+            g_pb->set_speed(settings::get().default_speed);
+            if (g_pb->segment_count() > 1) g_panel_hidden = false; // reveal the episode list
+            if (settings::get().autoplay_on_open) g_pb->play();
+        }
     }
 }
 
@@ -1558,6 +1567,8 @@ void panel_splitter(float edge_x, ImVec2 area_pos, float panel_h) {
 
 void layout(ImVec2 o, ImVec2 sz) {
     if (sz.x <= 0 || sz.y <= 0) return;
+
+    poll_open(); // consume a dialog pick / finish async-open setup
 
     // On an episode switch, drop the video textures so panels fall back to the
     // loading bed instead of holding the previous episode's last frame until

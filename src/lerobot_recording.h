@@ -54,8 +54,13 @@ private:
     std::string data_file_path(const Episode& e) const; // resolves a real path
     void build_episode_file_map();                       // episode_index -> data parquet
 
+    struct FileRange {
+        std::string path;
+        int lo = 0, hi = 0; // inclusive episode_index range in that file
+    };
+
     std::string dir_;
-    std::map<int, std::string> ep_file_;
+    std::vector<FileRange> ep_ranges_;
     double fps_ = 30.0;
     std::vector<std::string> video_keys_, scalar_keys_;
     std::map<std::string, VideoChannelInfo> vinfo_;

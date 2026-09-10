@@ -26,29 +26,44 @@ void Playback::rebuild_from_rec() {
 
 bool Playback::open(const std::string& path) {
     close();
-    auto rec = open_recording(path);
-    if (!rec) return false;
-    rec_ = std::move(rec);
     path_ = path;
-    rebuild_from_rec();
-    cur_seg_.store(rec_->current_segment());
-    seg_switching_.store(false);
-
-    current_time_us_.store(start_us_.load());
-    last_dispatch_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count());
-    should_stop_.store(false);
-    seek_pending_.store(false);
-    playing_.store(false);
-
-    thread_ = std::thread(&Playback::playback_loop, this);
-    // Show the current frame right away (Foxglove-style paused preview).
-    seek(start_us_.load());
+    const int epoch = switch_epoch_.load();
+    opening_.store(true);
+    open_thread_ = std::thread([this, path, epoch] {
+        auto rec = open_recording(path);
+        if (!rec || epoch != switch_epoch_.load()) {
+            if (!rec) std::fprintf(stderr, "playback: failed to open %s\n", path.c_str());
+            opening_.store(false);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> rl(rec_mx_);
+            if (epoch != switch_epoch_.load()) {
+                opening_.store(false);
+                return;
+            }
+            rec_ = std::move(rec);
+            rebuild_from_rec();
+            cur_seg_.store(rec_->current_segment());
+        }
+        seg_switching_.store(false);
+        current_time_us_.store(start_us_.load());
+        last_dispatch_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count());
+        should_stop_.store(false);
+        seek_pending_.store(false);
+        playing_.store(false);
+        thread_ = std::thread(&Playback::playback_loop, this);
+        seek(start_us_.load()); // Foxglove-style paused preview of the first frame
+        opening_.store(false);
+    });
     return true;
 }
 
 void Playback::close() {
-    ++switch_epoch_; // cancel any in-flight background switch
+    ++switch_epoch_; // cancel any in-flight background open / switch
+    if (open_thread_.joinable()) open_thread_.join();
     if (switch_thread_.joinable()) switch_thread_.join();
+    opening_.store(false);
     seg_switching_.store(false);
     stop_thread();
     std::lock_guard<std::mutex> rl(rec_mx_);

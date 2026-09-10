@@ -29,9 +29,12 @@ public:
     Playback();
     ~Playback();
 
+    // Starts opening `path` on a background thread and returns immediately.
+    // Poll is_open() / opening() for progress.
     bool open(const std::string& path);
     void close();
     bool is_open() const { return rec_ != nullptr; }
+    bool opening() const { return opening_.load(); }
     const std::string& path() const { return path_; }
 
     void play();
@@ -135,8 +138,10 @@ private:
     std::map<std::string, VideoChannelInfo> vinfo_cache_;
     std::atomic<int> cur_seg_{0};
     std::atomic<bool> seg_switching_{false};
+    std::atomic<bool> opening_{false};
     std::atomic<int> switch_epoch_{0};
     std::thread switch_thread_;
+    std::thread open_thread_;
 
     std::mutex frames_mutex_;
     std::map<std::string, VideoFramePtr> latest_frames_;

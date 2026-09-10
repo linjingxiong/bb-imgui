@@ -352,9 +352,7 @@ int main(int argc, char** argv) {
 
     logo::load(g_device, g_queue, 19.0f); // Blockbench wordmark for the title bar
     player_ui::init(g_device, g_queue);
-    if (argc > 1) player_ui::open_path(argv[1]); // CLI: bb_imgui <file.mcap> [play]
-    if (argc > 2 && std::strcmp(argv[2], "play") == 0 && player_ui::has_file())
-        player_ui::playback().play();
+    if (argc > 1) player_ui::open_path(argv[1]); // CLI: bb_imgui <path>  (opens async)
 
     const ImVec4 clear = ImVec4(0.157f, 0.173f, 0.204f, 1.0f); // Blockbench "ui"
 

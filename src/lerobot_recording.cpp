@@ -44,29 +44,33 @@ LeRobotRecording::~LeRobotRecording() {
     img_.clear();
 }
 
-// One pass over the data parquets to learn which file holds each episode's
-// rows — some datasets have a broken data/file_index or 1-based file names, so
-// the mapping can't be trusted by name.
+// Learn which file holds each episode's rows — some datasets have a broken
+// data/file_index or 1-based file names, so the mapping can't be trusted by
+// name. parquet_metadata() reads only the footer, so this stays cheap even for
+// many large files.
 void LeRobotRecording::build_episode_file_map() {
-    ep_file_.clear();
+    ep_ranges_.clear();
     std::string glob = dir_;
     for (auto& c : glob) if (c == '\\') c = '/';
     glob += "/data/**/*.parquet";
     ParquetDB db;
     ParquetDB::Table t;
-    if (db.query("SELECT DISTINCT \"episode_index\" AS ei, filename AS fn FROM read_parquet('" +
-                     sql_path(glob) + "', filename=true)",
+    if (db.query("SELECT file_name AS fn, min(stats_min_value::BIGINT) AS lo, "
+                 "max(stats_max_value::BIGINT) AS hi FROM parquet_metadata('" +
+                     sql_path(glob) + "') WHERE path_in_schema = 'episode_index' GROUP BY file_name",
                  t)) {
-        const auto* ei = t.col("ei");
         const auto* fn = t.col("fn");
-        if (ei && fn)
-            for (size_t r = 0; r < t.rows; ++r) ep_file_[(int)ei->num[r]] = fn->str[r];
+        const auto* lo = t.col("lo");
+        const auto* hi = t.col("hi");
+        if (fn && lo && hi)
+            for (size_t r = 0; r < t.rows; ++r)
+                ep_ranges_.push_back({fn->str[r], (int)lo->num[r], (int)hi->num[r]});
     }
 }
 
 std::string LeRobotRecording::data_file_path(const Episode& e) const {
-    auto it = ep_file_.find(e.ep_index);
-    if (it != ep_file_.end() && fs::exists(it->second)) return it->second;
+    for (const auto& r : ep_ranges_)
+        if (e.ep_index >= r.lo && e.ep_index <= r.hi && fs::exists(r.path)) return r.path;
     // Fallback: templated name, then the i-th sorted file.
     char buf[256];
     std::snprintf(buf, sizeof(buf), "%s/data/chunk-%03d/file-%03d.parquet", dir_.c_str(),
