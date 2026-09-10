@@ -23,6 +23,7 @@ public:
 
     uint64_t start_time_us() const override { return 0; }
     uint64_t end_time_us() const override { return seg_len_us_; }
+    uint64_t loaded_until_us() const override;
     const std::vector<std::string>& video_channels() const override { return video_keys_; }
     const std::vector<std::string>& scalar_channels() const override { return scalar_keys_; }
     bool has_audio() const override { return false; }

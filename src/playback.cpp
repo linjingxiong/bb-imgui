@@ -248,6 +248,14 @@ void Playback::playback_loop() {
             bool hit_end = to >= file_end;
             if (hit_end) to = file_end;
 
+            // Don't let the clock outrun the background frame loader — play as
+            // slow as it delivers, catch up to real time once it's ahead.
+            const uint64_t loaded = rec_ ? rec_->loaded_until_us() : file_end;
+            if (to > loaded) {
+                to = std::max(from, loaded);
+                hit_end = false;
+            }
+
             advance_to(to);
             if (seek_pending_.load() || should_stop_.load()) break;
             current_time_us_.store(to);

@@ -77,6 +77,13 @@ bool ImageColumnSource::start(const std::string& parquet_path, const std::string
     return true;
 }
 
+uint64_t ImageColumnSource::loaded_until_us() const {
+    int n = bulk_upto_.load(std::memory_order_acquire);
+    if (n <= 0 || ts_.empty()) return 0;
+    if (n >= (int)ts_.size()) return UINT64_MAX; // fully loaded — never the limit
+    return (uint64_t)(ts_[n - 1] * 1e6);
+}
+
 int ImageColumnSource::row_for(uint64_t target_us) const {
     const double t = target_us / 1e6;
     int row = 0;

@@ -60,6 +60,10 @@ public:
     // Immutable after a successful open.
     virtual uint64_t start_time_us() const = 0;
     virtual uint64_t end_time_us() const = 0;
+    // How far into the current segment video frames are actually available.
+    // Defaults to "all of it"; a format that streams its frames in the
+    // background reports its progress so the clock can wait for the loader.
+    virtual uint64_t loaded_until_us() const { return end_time_us(); }
     virtual const std::vector<std::string>& video_channels() const = 0;
     virtual const std::vector<std::string>& scalar_channels() const = 0;
     virtual bool has_audio() const = 0;

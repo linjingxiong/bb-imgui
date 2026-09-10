@@ -44,6 +44,9 @@ public:
     int width() const { return w_; }
     int height() const { return h_; }
     uint64_t window_len_us() const { return win_len_us_; }
+    // Episode-relative time up to which frames have been bulk-loaded (0 until
+    // the loader produces the first, win_len_us_ once it finishes).
+    uint64_t loaded_until_us() const;
 
     // Last frame at or before `target_us` (window-relative), or null.
     VideoFramePtr frame_at(uint64_t target_us, const std::function<bool()>& cancelled);

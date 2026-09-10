@@ -324,6 +324,16 @@ bool LeRobotRecording::select_segment(int i) {
     return true;
 }
 
+uint64_t LeRobotRecording::loaded_until_us() const {
+    // The clock shouldn't outrun the slowest still-loading image column. mp4
+    // columns decode on demand, so they're treated as fully available.
+    uint64_t lo = seg_len_us_;
+    bool any = false;
+    for (const auto& [k, src] : img_)
+        if (src) { lo = std::min(lo, src->loaded_until_us()); any = true; }
+    return any ? lo : seg_len_us_;
+}
+
 VideoChannelInfo LeRobotRecording::video_info(const std::string& ch) const {
     auto it = vinfo_.find(ch);
     return it == vinfo_.end() ? VideoChannelInfo{} : it->second;
