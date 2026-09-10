@@ -3,6 +3,8 @@
 #include "bb.h"
 #include "fonts.h"
 #include "icons.h"
+#include "pixel_inspector.h"
+#include "pixel_sample.h"
 #include "playback.h"
 #include "settings.h"
 #include "theme.h"
@@ -653,7 +655,8 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
 
     auto& tex = g_textures[topic];
     if (!tex) tex = std::make_unique<mp::VideoTexture>(g_device, g_queue);
-    if (auto frame = g_pb->latest_frame(topic)) tex->update(frame);
+    mp::VideoFramePtr frame = g_pb->latest_frame(topic);
+    if (frame) tex->update(frame);
 
     if (tex->valid() && tex->width() > 0 && tex->height() > 0) {
         bool rot90 = ((((v.rot % 360) + 360) % 360) % 180) != 0;
@@ -665,8 +668,20 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         ImVec2 ip = snap(ImVec2(c0.x + (csz.x - dw) * 0.5f, c0.y + (csz.y - dh) * 0.5f));
         ImGui::SetCursorScreenPos(ip);
         draw_video(ImVec2(dw, dh), tex->id(), v.rot);
+        dl->PopClipRect();
+
+        // Pixel magnifier / colour picker over the displayed frame.
+        if (frame) {
+            mp::VideoFramePtr f = frame;
+            px::PixelInspector((topic + "##pxi").c_str(), ip, ImVec2(ip.x + dw, ip.y + dh),
+                               f->width, f->height, v.rot, topic.c_str(),
+                               [f](int x, int y, unsigned char* rgb) {
+                                   return mp::sample_rgb(*f, x, y, rgb);
+                               });
+        }
+    } else {
+        dl->PopClipRect();
     }
-    dl->PopClipRect();
 
     // ── Info overlay ──────────────────────────────────────────────────────
     // A single identity chip (top-left, same look as the IMU chip) plus a

@@ -40,8 +40,7 @@ public:
     void interrupt();
 
 private:
-    void* db_ = nullptr;   // duckdb_database
-    void* conn_ = nullptr; // duckdb_connection
+    void* conn_ = nullptr; // duckdb_connection (into the shared process instance)
 };
 
 // Escape a filesystem path for use inside a SQL string literal

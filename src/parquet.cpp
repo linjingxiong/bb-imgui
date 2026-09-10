@@ -3,35 +3,55 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <mutex>
 
 #include <duckdb.h>
 
 namespace mp {
 
+// One in-memory DuckDB instance for the whole process; every ParquetDB is just
+// a connection to it. A fresh instance per ParquetDB would each spin up its own
+// worker pool — dozens of threads and a lot of idle CPU for a few small reads.
+namespace {
+std::mutex g_db_mx;
+duckdb_database g_db = nullptr;
+int g_conns = 0;
+} // namespace
+
 ParquetDB::ParquetDB() {
-    duckdb_database db = nullptr;
+    std::lock_guard<std::mutex> lk(g_db_mx);
+    if (!g_db) {
+        if (duckdb_open(nullptr, &g_db) != DuckDBSuccess) {
+            std::fprintf(stderr, "parquet: duckdb_open failed\n");
+            g_db = nullptr;
+            return;
+        }
+        duckdb_connection c = nullptr;
+        if (duckdb_connect(g_db, &c) == DuckDBSuccess) {
+            duckdb_result r;
+            if (duckdb_query(c, "SET threads TO 4", &r) == DuckDBSuccess) {}
+            duckdb_destroy_result(&r);
+            duckdb_disconnect(&c);
+        }
+    }
+    if (!g_db) return;
     duckdb_connection conn = nullptr;
-    if (duckdb_open(nullptr, &db) != DuckDBSuccess) {
-        std::fprintf(stderr, "parquet: duckdb_open failed\n");
-        return;
-    }
-    if (duckdb_connect(db, &conn) != DuckDBSuccess) {
+    if (duckdb_connect(g_db, &conn) != DuckDBSuccess) {
         std::fprintf(stderr, "parquet: duckdb_connect failed\n");
-        duckdb_close(&db);
         return;
     }
-    db_ = db;
     conn_ = conn;
+    ++g_conns;
 }
 
 ParquetDB::~ParquetDB() {
-    if (conn_) {
-        auto c = (duckdb_connection)conn_;
-        duckdb_disconnect(&c);
-    }
-    if (db_) {
-        auto d = (duckdb_database)db_;
-        duckdb_close(&d);
+    if (!conn_) return;
+    auto c = (duckdb_connection)conn_;
+    duckdb_disconnect(&c);
+    std::lock_guard<std::mutex> lk(g_db_mx);
+    if (--g_conns == 0 && g_db) {
+        duckdb_close(&g_db);
+        g_db = nullptr;
     }
 }
 
