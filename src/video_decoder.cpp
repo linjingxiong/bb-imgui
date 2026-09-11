@@ -174,13 +174,16 @@ VideoFramePtr VideoDecoder::decode(const std::string& codec, const uint8_t* data
 
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
-    if (!packet || !frame) {
+    // av_new_packet's buffer carries FFmpeg's required AV_INPUT_BUFFER_PADDING_SIZE
+    // slack past `size` — some decoders (MJPEG among them) over-read past the
+    // payload; aliasing the caller's pointer directly (no such slack) risks a
+    // decode failure or an out-of-bounds read depending on what backs it.
+    if (!packet || !frame || av_new_packet(packet, size) < 0) {
         av_packet_free(&packet);
         av_frame_free(&frame);
         return {};
     }
-    packet->data = const_cast<uint8_t*>(data);
-    packet->size = size;
+    std::memcpy(packet->data, data, size);
 
     VideoFramePtr output;
     int send_ret = avcodec_send_packet(ctx_, packet);
@@ -215,13 +218,12 @@ void VideoDecoder::decode_discard(const std::string& codec, const uint8_t* data,
 
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
-    if (!packet || !frame) {
+    if (!packet || !frame || av_new_packet(packet, size) < 0) {
         av_packet_free(&packet);
         av_frame_free(&frame);
         return;
     }
-    packet->data = const_cast<uint8_t*>(data);
-    packet->size = size;
+    std::memcpy(packet->data, data, size);
 
     int send_ret = avcodec_send_packet(ctx_, packet);
     if (send_ret == AVERROR(EAGAIN)) {

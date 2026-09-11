@@ -933,6 +933,8 @@ void display(ImVec2 pos, ImVec2 size) {
                         u32(p.subtle_text), line2);
             ImGui::PopFont();
         }
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::Dummy(size); // pin the child's content bounds to the full area
         ImGui::EndChild();
         return;
     }
@@ -958,6 +960,8 @@ void display(ImVec2 pos, ImVec2 size) {
         std::find(vts.begin(), vts.end(), g_focus_topic) != vts.end();
     if (focus_valid) {
         one(g_focus_topic);
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::Dummy(size); // pin the child's content bounds to the full area
         ImGui::EndChild();
         return;
     }
@@ -966,6 +970,8 @@ void display(ImVec2 pos, ImVec2 size) {
 
     if (n == 1) {
         one(vts[0]);
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::Dummy(size); // pin the child's content bounds to the full area
         ImGui::EndChild();
         return;
     }
@@ -1057,6 +1063,8 @@ void display(ImVec2 pos, ImVec2 size) {
                                       ImVec2(tcx, ty), tri_col);
             }
         }
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::Dummy(size); // pin the child's content bounds to the full area
         ImGui::EndChild();
         return;
     }
@@ -1079,6 +1087,8 @@ void display(ImVec2 pos, ImVec2 size) {
         video_panel(vts[i], snap(ImVec2(px, y0 + gy * (ps.y + PAD))), ps);
     }
 
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::Dummy(size); // pin the child's content bounds to the full area
     ImGui::EndChild();
 }
 

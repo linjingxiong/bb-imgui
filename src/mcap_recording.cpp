@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <set>
 #include <thread>
 
 namespace mp {
@@ -100,9 +101,25 @@ bool McapRecording::open(const std::string& path) {
     auto topic_set = reader_.topics_with_messages();
     topics_.assign(topic_set.begin(), topic_set.end());
     std::sort(topics_.begin(), topics_.end());
+    // Classify by schema first (works regardless of topic naming — e.g.
+    // NuScenes-style /CAM_FRONT/... on foxglove.CompressedImage); the old
+    // topic-prefix convention is only a fallback for channels with no schema
+    // (or one we don't recognise), so schema-less private writers still work.
+    const auto schemas = reader_.topic_schemas();
     for (const auto& t : topics_) {
-        if (is_video_topic(t)) video_topics_.push_back(t);
-        else if (is_imu_topic(t)) scalar_topics_.push_back(t);
+        auto sit = schemas.find(t);
+        const std::string& schema = sit != schemas.end() ? sit->second : std::string();
+        if (schema == "foxglove.CompressedVideo") {
+            video_topics_.push_back(t);
+        } else if (schema == "foxglove.CompressedImage") {
+            video_topics_.push_back(t);
+            still_topics_.insert(t);
+        } else if (schema == "ego.ImuSample") {
+            scalar_topics_.push_back(t);
+        } else if (schema.empty()) {
+            if (is_video_topic(t)) video_topics_.push_back(t);
+            else if (is_imu_topic(t)) scalar_topics_.push_back(t);
+        }
     }
     for (const auto& t : video_topics_) {
         decoders_[t] = std::make_unique<VideoDecoder>();
@@ -113,8 +130,12 @@ bool McapRecording::open(const std::string& path) {
 }
 
 void McapRecording::preload() {
+    // Authoritative sets built during open()'s schema classification, rather
+    // than re-deriving from the topic-name prefix heuristic here (which
+    // would miss e.g. NuScenes-style /CAM_FRONT/... video topics).
+    const std::set<std::string> scalar_set(scalar_topics_.begin(), scalar_topics_.end());
     reader_.read_messages(reader_.start_time_us(), 0, [&](const McapMessage& m) -> bool {
-        if (is_imu_topic(m.topic)) {
+        if (scalar_set.count(m.topic)) {
             DecodedImuSample s;
             if (!decode_imu_sample(m.data, s)) return true;
             ScalarSample ss;
@@ -139,20 +160,27 @@ void McapRecording::preload() {
                 }
                 audio_hist_.push_back({m.timestamp_us + (uint64_t)((double)f0 / sr * 1e6), peak});
             }
-        } else if (is_video_topic(m.topic)) {
+        } else if (decoders_.count(m.topic)) {
+            // CompressedImage: a self-contained still per message, no GOP —
+            // every decoded frame is its own keyframe, and there's no
+            // SPS/PPS to extract (that's an H.264/H.265-bitstream concept).
+            const bool still = still_topics_.count(m.topic) != 0;
             DecodedCompressedVideo v;
-            if (decode_compressed_video(m.data, v) && !v.data.empty()) {
+            bool ok = still ? decode_compressed_image(m.data, v) : decode_compressed_video(m.data, v);
+            if (ok && !v.data.empty()) {
                 auto& info = info_[m.topic];
                 if (info.frames++ == 0) info.first_us = m.timestamp_us;
                 info.last_us = m.timestamp_us;
                 info.bytes += v.data.size();
                 if (info.codec.empty()) info.codec = v.format;
-                if (packet_is_keyframe(v.format, v.data.data(), v.data.size()))
+                if (still || packet_is_keyframe(v.format, v.data.data(), v.data.size()))
                     keyframes_[m.topic].push_back(m.timestamp_us);
-                auto dit = decoders_.find(m.topic);
-                if (dit != decoders_.end() && dit->second) {
-                    auto ex = extract_param_sets(v.format, v.data.data(), v.data.size());
-                    if (!ex.empty()) dit->second->set_extradata(ex.data(), (int)ex.size());
+                if (!still) {
+                    auto dit = decoders_.find(m.topic);
+                    if (dit != decoders_.end() && dit->second) {
+                        auto ex = extract_param_sets(v.format, v.data.data(), v.data.size());
+                        if (!ex.empty()) dit->second->set_extradata(ex.data(), (int)ex.size());
+                    }
                 }
             }
         }
@@ -167,10 +195,12 @@ void McapRecording::preload() {
         auto dit = decoders_.find(topic);
         if (dit == decoders_.end() || !dit->second) continue;
         uint64_t kf = kfs.front();
+        const bool still = still_topics_.count(topic) != 0;
         reader_.read_messages(kf, kf + 1, [&](const McapMessage& m) -> bool {
             if (m.topic != topic) return true;
             DecodedCompressedVideo v;
-            if (!decode_compressed_video(m.data, v)) return true;
+            bool ok = still ? decode_compressed_image(m.data, v) : decode_compressed_video(m.data, v);
+            if (!ok) return true;
             if (auto f = dit->second->decode(v.format, v.data.data(), (int)v.data.size())) {
                 info_[topic].width = f->width;
                 info_[topic].height = f->height;
@@ -258,12 +288,13 @@ bool McapRecording::seek_video(uint64_t target_us, const std::function<bool()>& 
     std::map<std::string, std::vector<DecodedCompressedVideo>> packets;
     reader_.read_messages(read_start, target_us + 1, [&](const McapMessage& m) -> bool {
         if (cancelled()) return false;
-        if (!is_video_topic(m.topic)) return true;
+        if (!decoders_.count(m.topic)) return true;
         auto it = plan.find(m.topic);
         if (it == plan.end() || m.timestamp_us < it->second.start_us) return true;
-        if (decoders_.find(m.topic) == decoders_.end()) return true;
         DecodedCompressedVideo v;
-        if (!decode_compressed_video(m.data, v)) return true;
+        bool ok = still_topics_.count(m.topic) ? decode_compressed_image(m.data, v)
+                                                : decode_compressed_video(m.data, v);
+        if (!ok) return true;
         packets[m.topic].push_back(std::move(v));
         return true;
     });

@@ -103,6 +103,23 @@ bool decode_compressed_video(const std::vector<uint8_t>& payload, DecodedCompres
     return any;
 }
 
+bool decode_compressed_image(const std::vector<uint8_t>& payload, DecodedCompressedVideo& out) {
+    size_t pos = 0;
+    PbField f;
+    bool any = false;
+    while (pb_read_field(payload.data(), payload.size(), pos, f)) {
+        any = true;
+        switch (f.field_number) {
+            case 1: out.timestamp_us = pb_decode_timestamp_us(f.bytes, f.bytes_len); break;
+            case 2: out.data.assign(f.bytes, f.bytes + f.bytes_len); break;
+            case 3: out.format = pb_str(f); break;
+            case 4: out.frame_id = pb_str(f); break;
+            default: break;
+        }
+    }
+    return any;
+}
+
 bool decode_raw_audio(const std::vector<uint8_t>& payload, DecodedRawAudio& out) {
     size_t pos = 0;
     PbField f;
@@ -189,6 +206,21 @@ std::set<std::string> McapReader::topics_with_messages() const {
     return result;
 }
 
+std::map<std::string, std::string> McapReader::topic_schemas() const {
+    std::map<std::string, std::string> result;
+    if (!impl_->is_open) return result;
+    const auto& stats = impl_->reader.statistics();
+    if (!stats) return result;
+    for (const auto& [channel_id, channel_ptr] : impl_->reader.channels()) {
+        if (!channel_ptr) continue;
+        auto it = stats->channelMessageCounts.find(channel_id);
+        if (it == stats->channelMessageCounts.end() || it->second == 0) continue;
+        auto schema_ptr = impl_->reader.schema(channel_ptr->schemaId);
+        result[channel_ptr->topic] = schema_ptr ? schema_ptr->name : std::string();
+    }
+    return result;
+}
+
 std::map<std::string, uint64_t> McapReader::message_totals() const {
     std::map<std::string, uint64_t> result;
     if (!impl_->is_open) return result;
@@ -247,7 +279,15 @@ bool McapReader::read_messages(uint64_t start_us, uint64_t end_us, const Message
     options.endTime = end_us == 0 ? mcap::MaxTime : static_cast<mcap::Timestamp>(end_us) * 1000ULL;
     // Channels are interleaved in write order, not global log-time order —
     // LogTimeOrder keeps the paced playback loop's timestamp deltas positive.
-    options.readOrder = mcap::ReadMessageOptions::ReadOrder::LogTimeOrder;
+    // LogTimeOrder needs a chunked file with message indexes (mcap's
+    // IndexedMessageReader); a handful of writers (e.g. the reference
+    // Foxglove Python SDK by default) don't chunk at all, and asking for
+    // LogTimeOrder against one of those silently yields zero messages. Fall
+    // back to FileOrder there — still monotonic per channel, just not
+    // globally interleaved.
+    options.readOrder = impl_->reader.chunkIndexes().empty()
+                            ? mcap::ReadMessageOptions::ReadOrder::FileOrder
+                            : mcap::ReadMessageOptions::ReadOrder::LogTimeOrder;
 
     for (const auto& view : impl_->reader.readMessages([](const mcap::Status&) {}, options)) {
         McapMessage msg;

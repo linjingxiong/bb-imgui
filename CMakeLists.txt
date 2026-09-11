@@ -48,6 +48,17 @@ FetchContent_Declare(nlohmann_json
     GIT_TAG        v3.11.3
     GIT_SHALLOW    TRUE)
 
+# LZ4 — chunk decompression for mcap files written with lz4-compressed
+# chunks (the default for many mcap writers, e.g. the official Foxglove SDKs;
+# EgoViewer's own writer leaves chunks uncompressed, so this was skipped
+# until a non-EgoViewer .mcap needed it).
+set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(lz4
+    GIT_REPOSITORY https://github.com/lz4/lz4.git
+    GIT_TAG        v1.10.0
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  build/cmake)
+
 # wgpu-native — WebGPU implementation (prebuilt binaries).
 set(WGPU_VERSION "v29.0.1.1")
 set(WGPU_BASE "https://github.com/gfx-rs/wgpu-native/releases/download/${WGPU_VERSION}")
@@ -68,7 +79,7 @@ else()
 endif()
 FetchContent_Declare(wgpu_native URL "${WGPU_BASE}/${WGPU_ZIP}")
 
-FetchContent_MakeAvailable(imgui glfw nlohmann_json wgpu_native)
+FetchContent_MakeAvailable(imgui glfw nlohmann_json wgpu_native lz4)
 
 # ---------------------------------------------------------------------------
 # wgpu-native imported target
@@ -115,7 +126,8 @@ target_link_libraries(imgui PUBLIC glfw wgpu_native)
 # ---------------------------------------------------------------------------
 add_library(mcap INTERFACE)
 target_include_directories(mcap INTERFACE ${CMAKE_SOURCE_DIR}/third_party/mcap/include)
-target_compile_definitions(mcap INTERFACE MCAP_COMPRESSION_NO_LZ4 MCAP_COMPRESSION_NO_ZSTD)
+target_compile_definitions(mcap INTERFACE MCAP_COMPRESSION_NO_ZSTD)
+target_link_libraries(mcap INTERFACE lz4)
 
 set(FFMPEG_ROOT ${CMAKE_SOURCE_DIR}/third_party/ffmpeg/windows)
 add_library(ffmpeg INTERFACE)

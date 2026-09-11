@@ -1,7 +1,11 @@
 // MCAP implementation of Recording. Reads EgoViewer-style .mcap recordings
 // (foxglove.CompressedVideo on /camera/*, ego.ImuSample on /imu/*,
 // foxglove.RawAudio on /audio) — the H.264/H.265 keyframe index, GOP replay
-// and per-camera parallel seek all live here.
+// and per-camera parallel seek all live here. Also reads plain
+// foxglove.CompressedImage video channels (jpeg/png stills, one per message,
+// no GOP — as written by generic Foxglove-schema tools rather than
+// EgoViewer), on whatever topic name they use, identified by schema rather
+// than a fixed topic prefix.
 #pragma once
 
 #include "recording.h"
@@ -11,6 +15,7 @@
 
 #include <memory>
 #include <mutex>
+#include <set>
 
 namespace mp {
 
@@ -45,6 +50,10 @@ private:
 
     McapReader reader_;
     std::vector<std::string> topics_, video_topics_, scalar_topics_;
+    // Video topics carrying foxglove.CompressedImage (a still per message, no
+    // GOP) rather than foxglove.CompressedVideo — every decoded message is
+    // its own keyframe, and there's no SPS/PPS extradata to extract.
+    std::set<std::string> still_topics_;
     std::map<std::string, std::unique_ptr<VideoDecoder>> decoders_;
     // Per video channel: sorted keyframe log times; the log time the decoder has
     // most recently consumed; stream totals.

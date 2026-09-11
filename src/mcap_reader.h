@@ -42,6 +42,11 @@ public:
     // Topics that carry at least one message in this file.
     std::set<std::string> topics_with_messages() const;
 
+    // Topic -> its channel's schema name (e.g. "foxglove.CompressedVideo"),
+    // for topics that carry at least one message. "" if the channel has no
+    // schema attached.
+    std::map<std::string, std::string> topic_schemas() const;
+
     // Total message count per topic, from the summary statistics (0 if the
     // file has no statistics section).
     std::map<std::string, uint64_t> message_totals() const;
@@ -68,6 +73,12 @@ struct DecodedCompressedVideo {
     std::string format; // "h264" / "h265"
 };
 bool decode_compressed_video(const std::vector<uint8_t>& payload, DecodedCompressedVideo& out);
+
+// foxglove.CompressedImage — a standard-Foxglove-schema still image per
+// message (jpeg/png/webp), no GOP. Different wire field layout from
+// CompressedVideo (data is field 2, frame_id is field 4) but the same shape
+// once decoded, so it fills the same struct.
+bool decode_compressed_image(const std::vector<uint8_t>& payload, DecodedCompressedVideo& out);
 
 struct DecodedRawAudio {
     uint64_t timestamp_us = 0;
