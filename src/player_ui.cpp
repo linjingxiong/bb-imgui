@@ -1585,20 +1585,6 @@ void layout(ImVec2 o, ImVec2 sz) {
 
     poll_open(); // consume a dialog pick / finish async-open setup
 
-    // On an episode switch, drop the video textures so panels fall back to the
-    // loading bed instead of holding the previous episode's last frame until
-    // the new one decodes.
-    static int g_last_seg = -1;
-    if (has_file()) {
-        int seg = g_pb->current_segment();
-        if (seg != g_last_seg) {
-            if (g_last_seg != -1) g_textures.clear();
-            g_last_seg = seg;
-        }
-    } else {
-        g_last_seg = -1;
-    }
-
     // Loop mode: when playback has run to the end, jump back to the start and
     // keep going. (Without loop mode the playback loop just stops there and the
     // transport shows its replay control.)

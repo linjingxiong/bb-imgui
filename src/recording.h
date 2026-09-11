@@ -75,7 +75,12 @@ public:
     // the new one. Returns false for an out-of-range index.
     virtual int segment_count() const { return 1; }
     virtual SegmentInfo segment_info(int i) const { (void)i; return {}; }
-    virtual bool select_segment(int i) { return i == 0; }
+    // `cancelled()` (when supplied) going true lets a slow switch bail early —
+    // the caller is about to switch again. Returns false if it did bail.
+    virtual bool select_segment(int i, const std::function<bool()>& cancelled = {}) {
+        (void)cancelled;
+        return i == 0;
+    }
     virtual int current_segment() const { return 0; }
 
     // Whole-recording history, preloaded during open (both formats can do this

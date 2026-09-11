@@ -124,6 +124,7 @@ private:
     bool advance_to(uint64_t target_us);
 
     void rebuild_from_rec();     // refresh cached topics / segment / video info from rec_
+    void switcher_loop();        // serialises + coalesces background segment switches
 
     std::unique_ptr<Recording> rec_;
     std::mutex rec_mx_;         // guards rec_ rebuild during a background segment switch
@@ -140,8 +141,16 @@ private:
     std::atomic<bool> seg_switching_{false};
     std::atomic<bool> opening_{false};
     std::atomic<int> switch_epoch_{0};
-    std::thread switch_thread_;
     std::thread open_thread_;
+
+    // Background segment switching: select_segment() just posts the target and
+    // wakes the switcher; the switcher does the heavy reload, coalescing rapid
+    // requests (only the newest target is fully loaded).
+    std::thread switcher_;
+    std::mutex switcher_mx_;
+    std::condition_variable switcher_cv_;
+    std::atomic<int> switch_target_{-1}; // -1 == nothing pending
+    std::atomic<bool> switcher_stop_{false};
 
     std::mutex frames_mutex_;
     std::map<std::string, VideoFramePtr> latest_frames_;

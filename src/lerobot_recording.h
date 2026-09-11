@@ -9,6 +9,7 @@
 #include "image_column_source.h"
 #include "mp4_source.h"
 
+#include <chrono>
 #include <map>
 #include <memory>
 
@@ -37,7 +38,7 @@ public:
     int segment_count() const override { return (int)episodes_.size(); }
     SegmentInfo segment_info(int i) const override;
     int current_segment() const override { return cur_ep_; }
-    bool select_segment(int i) override;
+    bool select_segment(int i, const std::function<bool()>& cancelled = {}) override;
 
 private:
     enum class VSrc { Mp4, Image }; // per video channel: mp4 file vs PNG-in-parquet
@@ -71,8 +72,20 @@ private:
     std::vector<Episode> episodes_;
 
     int cur_ep_ = -1;
+    std::string cur_file_;
     uint64_t seg_len_us_ = 0;
+    bool primed_ = false; // has the current segment shown a full frame set yet
+    std::chrono::steady_clock::time_point switch_t0_{};
     ParquetDB scalar_db_; // reused across episode switches (no open/close churn)
+
+    // Decoded first frame per (file, episode, camera) for the last few episodes
+    // viewed — a revisit primes instantly instead of re-reading the parquet.
+    struct FirstFrames {
+        std::string key;
+        std::map<std::string, VideoFramePtr> frames;
+    };
+    std::vector<FirstFrames> f0_cache_;
+    static constexpr size_t kF0CacheMax = 6;
     std::map<std::string, std::vector<ScalarSample>> scalar_hist_;
     std::map<std::string, std::unique_ptr<Mp4Source>> mp4_;
     std::map<std::string, std::unique_ptr<ImageColumnSource>> img_;

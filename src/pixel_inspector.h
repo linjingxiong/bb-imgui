@@ -1,10 +1,11 @@
 // A reusable magnifier / colour-picker overlay for an image drawn into the
 // current ImGui window. Call it immediately after submitting the image.
 //
-// Hovering the image hides the OS cursor, shows a small loupe, and marks the
-// pixel under the pointer; clicking opens a card at that spot with a zoomed
-// pixel grid, the source coordinate and the RGB / hex value. Esc or a click
-// outside closes it. At most one card is open across all instances.
+// Hold-to-inspect: press and hold the left button over the image to hide the
+// OS cursor, show a loupe, mark the pixel under the pointer, and open a card
+// (anchored at the press) with a zoomed pixel grid, the source coordinate and
+// the RGB / hex value. Drag to move the sample point; release to dismiss. One
+// instance at a time (ImGui allows a single active item).
 //
 // The widget is decoupled from any image type: it asks for pixels through a
 // `sample` callback and takes its colours from the current ImGui style.

@@ -6,9 +6,8 @@
 namespace px {
 namespace {
 
-// One card at a time, whichever instance owns it.
-ImGuiID g_owner = 0;
-int g_px = 0, g_py = 0;
+// Card anchor, remembered from the press so it doesn't jitter while dragging.
+// Only one InvisibleButton can be active at a time, so a single static is fine.
 ImVec2 g_anchor;
 
 int rot_norm(int rot) { return ((rot % 360) + 360) % 360; }
@@ -43,35 +42,43 @@ void PixelInspector(const char* str_id, ImVec2 img_min, ImVec2 img_max, int src_
     const ImVec2 save_cursor = ImGui::GetCursorScreenPos();
     ImGui::SetCursorScreenPos(img_min);
     ImGui::InvisibleButton(str_id, sz, ImGuiButtonFlags_MouseButtonLeft);
-    const ImGuiID id = ImGui::GetItemID();
-    const bool hov = ImGui::IsItemHovered();
-    const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+
+    // Hold-to-inspect: active from press to release, and only one at a time
+    // (ImGui allows a single active item).
+    const bool active = ImGui::IsItemActive();
+    if (ImGui::IsItemActivated()) g_anchor = ImGui::GetIO().MousePos;
+    if (!active) {
+        ImGui::SetCursorScreenPos(save_cursor);
+        return;
+    }
+
     const ImVec2 mp = ImGui::GetIO().MousePos;
 
-    // displayed-normalised (u,v) -> source pixel, inverting the CW rotation.
-    auto to_src = [&](ImVec2 m, int& sx, int& sy) -> bool {
-        float u = (m.x - img_min.x) / sz.x, v = (m.y - img_min.y) / sz.y;
-        if (u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return false;
+    // pointer -> source pixel, clamped to the image and inverting the CW
+    // rotation (so a drag past the edge still tracks the border pixels).
+    int px = 0, py = 0;
+    {
+        float u = std::clamp((mp.x - img_min.x) / sz.x, 0.0f, 0.999999f);
+        float v = std::clamp((mp.y - img_min.y) / sz.y, 0.0f, 0.999999f);
         float su, sv;
         switch (rn) {
-            case 90:  su = v;          sv = 1.0f - u;  break;
-            case 180: su = 1.0f - u;   sv = 1.0f - v;  break;
-            case 270: su = 1.0f - v;   sv = u;         break;
-            default:  su = u;          sv = v;         break;
+            case 90:  su = v;         sv = 1.0f - u;  break;
+            case 180: su = 1.0f - u;  sv = 1.0f - v;  break;
+            case 270: su = 1.0f - v;  sv = u;         break;
+            default:  su = u;         sv = v;         break;
         }
-        sx = std::clamp((int)(su * src_w), 0, src_w - 1);
-        sy = std::clamp((int)(sv * src_h), 0, src_h - 1);
-        return true;
-    };
+        px = std::clamp((int)(su * src_w), 0, src_w - 1);
+        py = std::clamp((int)(sv * src_h), 0, src_h - 1);
+    }
     // source pixel -> its screen rect (forward rotation; pixels stay axis-aligned).
     auto src_rect = [&](int sx, int sy, ImVec2& lo, ImVec2& hi) {
         auto fwd = [&](float su, float sv) -> ImVec2 {
             float u, v;
             switch (rn) {
-                case 90:  u = 1.0f - sv; v = su;         break;
-                case 180: u = 1.0f - su; v = 1.0f - sv;  break;
-                case 270: u = sv;        v = 1.0f - su;  break;
-                default:  u = su;        v = sv;         break;
+                case 90:  u = 1.0f - sv; v = su;        break;
+                case 180: u = 1.0f - su; v = 1.0f - sv; break;
+                case 270: u = sv;        v = 1.0f - su; break;
+                default:  u = su;        v = sv;        break;
             }
             return ImVec2(img_min.x + u * sz.x, img_min.y + v * sz.y);
         };
@@ -81,53 +88,29 @@ void PixelInspector(const char* str_id, ImVec2 img_min, ImVec2 img_max, int src_
         hi = ImVec2(std::max(a.x, b.x), std::max(a.y, b.y));
     };
 
-    int hx = 0, hy = 0;
-    const bool over_pixel = hov && to_src(mp, hx, hy);
-
+    ImGui::SetMouseCursor(ImGuiMouseCursor_None);
     ImDrawList* fg = ImGui::GetForegroundDrawList();
 
-    if (over_pixel) {
-        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
-        ImVec2 lo, hi;
-        src_rect(hx, hy, lo, hi);
-        fg->AddRect(ImVec2(lo.x - 1, lo.y - 1), ImVec2(hi.x + 1, hi.y + 1), IM_COL32(0, 0, 0, 150),
-                    0.0f, 0, 1.0f);
-        fg->AddRect(lo, hi, IM_COL32(255, 255, 255, 235), 0.0f, 0, 1.0f);
-        draw_loupe(fg, mp);
-    }
+    // Marker over the pixel under the pointer + the loupe glyph.
+    ImVec2 lo, hi;
+    src_rect(px, py, lo, hi);
+    fg->AddRect(ImVec2(lo.x - 1, lo.y - 1), ImVec2(hi.x + 1, hi.y + 1), IM_COL32(0, 0, 0, 150), 0.0f,
+                0, 1.0f);
+    fg->AddRect(lo, hi, IM_COL32(255, 255, 255, 235), 0.0f, 0, 1.0f);
+    draw_loupe(fg, mp);
 
-    if (clicked && over_pixel) {
-        g_owner = id;
-        g_px = hx;
-        g_py = hy;
-        g_anchor = mp;
-    }
-
-    // ── The pick card ────────────────────────────────────────────────────
-    if (g_owner != id) {
-        ImGui::SetCursorScreenPos(save_cursor);
-        return;
-    }
-
-    const int N = 7;                       // grid radius -> 15x15
+    // ── The card ─────────────────────────────────────────────────────────
+    const int N = 7;                      // grid radius -> 15x15
     const float CELL = 9.0f;
-    const float GRID = (2 * N + 1) * CELL;  // 135
-    const float PAD = 12.0f, GAP = 14.0f, HEAD = 26.0f;
-    const float TXT_W = 168.0f;
+    const float GRID = (2 * N + 1) * CELL;
+    const float PAD = 12.0f, GAP = 14.0f, HEAD = 26.0f, TXT_W = 168.0f;
     const ImVec2 csz(PAD + GRID + GAP + TXT_W + PAD, HEAD + PAD + GRID + PAD);
 
     ImVec2 cpos(g_anchor.x + 18.0f, g_anchor.y + 14.0f);
     const ImVec2 vp_min = ImGui::GetMainViewport()->WorkPos;
     const ImVec2 vp_sz = ImGui::GetMainViewport()->WorkSize;
-    cpos.x = std::min(cpos.x, vp_min.x + vp_sz.x - csz.x - 4.0f);
-    cpos.y = std::min(cpos.y, vp_min.y + vp_sz.y - csz.y - 4.0f);
-    cpos.x = std::max(cpos.x, vp_min.x + 4.0f);
-    cpos.y = std::max(cpos.y, vp_min.y + 4.0f);
-
-    // Swallow interaction over the card so clicks don't fall through.
-    ImGui::SetCursorScreenPos(cpos);
-    ImGui::InvisibleButton("##px_card", csz);
-    const bool card_hov = ImGui::IsItemHovered();
+    cpos.x = std::clamp(cpos.x, vp_min.x + 4.0f, vp_min.x + vp_sz.x - csz.x - 4.0f);
+    cpos.y = std::clamp(cpos.y, vp_min.y + 4.0f, vp_min.y + vp_sz.y - csz.y - 4.0f);
 
     const ImU32 bg = style_col(ImGuiCol_PopupBg);
     const ImU32 bord = style_col(ImGuiCol_Border, 0.9f);
@@ -137,7 +120,6 @@ void PixelInspector(const char* str_id, ImVec2 img_min, ImVec2 img_max, int src_
     fg->AddRectFilled(cpos, ImVec2(cpos.x + csz.x, cpos.y + csz.y), bg, 6.0f);
     fg->AddRect(cpos, ImVec2(cpos.x + csz.x, cpos.y + csz.y), bord, 6.0f, 0, 1.0f);
 
-    // Header
     if (label && label[0])
         fg->AddText(ImVec2(cpos.x + PAD, cpos.y + (HEAD - ImGui::GetFontSize()) * 0.5f), txt, label);
     fg->AddLine(ImVec2(cpos.x, cpos.y + HEAD), ImVec2(cpos.x + csz.x, cpos.y + HEAD), bord, 1.0f);
@@ -145,19 +127,18 @@ void PixelInspector(const char* str_id, ImVec2 img_min, ImVec2 img_max, int src_
     // Zoom grid
     const ImVec2 g0(cpos.x + PAD, cpos.y + HEAD + PAD);
     unsigned char centre[3] = {0, 0, 0};
-    bool centre_ok = sample(g_px, g_py, centre);
+    const bool centre_ok = sample(px, py, centre);
     for (int dy = -N; dy <= N; ++dy)
         for (int dx = -N; dx <= N; ++dx) {
             unsigned char c[3];
             ImVec2 a(g0.x + (dx + N) * CELL, g0.y + (dy + N) * CELL);
             ImVec2 b(a.x + CELL, a.y + CELL);
-            if (sample(g_px + dx, g_py + dy, c))
+            if (sample(px + dx, py + dy, c))
                 fg->AddRectFilled(a, b, IM_COL32(c[0], c[1], c[2], 255));
             else
                 fg->AddRectFilled(a, b, IM_COL32(40, 40, 40, 255));
         }
     fg->AddRect(g0, ImVec2(g0.x + GRID, g0.y + GRID), bord, 0.0f, 0, 1.0f);
-    // centre-pixel marker
     ImVec2 ca(g0.x + N * CELL, g0.y + N * CELL);
     fg->AddRect(ImVec2(ca.x - 1, ca.y - 1), ImVec2(ca.x + CELL + 1, ca.y + CELL + 1),
                 IM_COL32(0, 0, 0, 180), 0.0f, 0, 1.0f);
@@ -168,7 +149,7 @@ void PixelInspector(const char* str_id, ImVec2 img_min, ImVec2 img_max, int src_
     float ty = g0.y + 2.0f;
     const float lh = ImGui::GetTextLineHeightWithSpacing();
     char buf[64];
-    std::snprintf(buf, sizeof(buf), "Position:  %d, %d", g_px, g_py);
+    std::snprintf(buf, sizeof(buf), "Position:  %d, %d", px, py);
     fg->AddText(ImVec2(tx, ty), txt, buf);
     ty += lh;
     if (centre_ok) {
@@ -184,11 +165,6 @@ void PixelInspector(const char* str_id, ImVec2 img_min, ImVec2 img_max, int src_
     } else {
         fg->AddText(ImVec2(tx, ty), dim, "RGB:  --");
     }
-
-    // Close
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_owner = 0;
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !card_hov && !(hov && over_pixel))
-        g_owner = 0;
 
     ImGui::SetCursorScreenPos(save_cursor);
 }

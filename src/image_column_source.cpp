@@ -172,8 +172,12 @@ void ImageColumnSource::loader_main() {
 #endif
     const int n = (int)ts_.size();
 
-    // Phase 1: pull the episode's image bytes in row chunks. This first query
-    // also absorbs any stale interrupt flag left by the previous stop.
+    // Phase 1: pull the episode's image bytes in row chunks — frame 0 alone
+    // first (cheap: a single row's worth of decode), then steady 32-row
+    // batches. bulk_upto_ climbs after each chunk, so a channel is "ready"
+    // (frame_at can serve row 0) within the first chunk rather than after the
+    // whole episode loads. The leading SELECT absorbs any stale interrupt flag
+    // left by the previous stop.
     {
         ParquetDB::Table tmp;
         loader_db_.query("SET threads TO 1", tmp);

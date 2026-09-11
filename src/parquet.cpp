@@ -28,9 +28,13 @@ ParquetDB::ParquetDB() {
         }
         duckdb_connection c = nullptr;
         if (duckdb_connect(g_db, &c) == DuckDBSuccess) {
-            duckdb_result r;
-            if (duckdb_query(c, "SET threads TO 4", &r) == DuckDBSuccess) {}
-            duckdb_destroy_result(&r);
+            // Cap the worker pool; cache parquet footers so switching between a
+            // dataset's data files doesn't re-parse a 450MB file's metadata.
+            for (const char* s : {"SET threads TO 4", "SET parquet_metadata_cache = true"}) {
+                duckdb_result r;
+                duckdb_query(c, s, &r);
+                duckdb_destroy_result(&r);
+            }
             duckdb_disconnect(&c);
         }
     }

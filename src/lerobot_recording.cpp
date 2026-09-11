@@ -225,9 +225,11 @@ bool LeRobotRecording::open(const std::string& dir) {
     return select_segment(0);
 }
 
-bool LeRobotRecording::select_segment(int i) {
+bool LeRobotRecording::select_segment(int i, const std::function<bool()>& cancelled) {
     if (i < 0 || i >= (int)episodes_.size()) return false;
+    auto bail = [&] { return cancelled && cancelled(); };
     cur_ep_ = i;
+    primed_ = false;
     const Episode& e = episodes_[i];
 
     // Row selection keys off episode_index / frame_index: some published
@@ -237,48 +239,14 @@ bool LeRobotRecording::select_segment(int i) {
     int64_t n_frames = e.length > 0 ? e.length : std::max<int64_t>(0, e.to_index - e.from_index);
     seg_len_us_ = fps_ > 0 ? (uint64_t)(n_frames / fps_ * 1e6) : 0;
 
+    switch_t0_ = std::chrono::steady_clock::now();
     const std::string file = data_file_path(e);
+    cur_file_ = file;
+    if (bail()) return false;
 
-    // Scalar history: read this episode's rows from the data parquet.
-    scalar_hist_.clear();
-    if (!scalar_keys_.empty() && scalar_db_.ok()) {
-        ParquetDB& db = scalar_db_;
-        std::string sel = "timestamp";
-        for (const auto& k : scalar_keys_) {
-            int d = sinfo_[k].dims;
-            for (int c = 0; c < d; ++c)
-                sel += ", " + q(k) + "[" + std::to_string(c + 1) + "] AS " + q(k + "|" +
-                       std::to_string(c));
-        }
-        char where[96];
-        std::snprintf(where, sizeof(where), " WHERE \"episode_index\" = %d", e.ep_index);
-        ParquetDB::Table dt;
-        if (db.query("SELECT " + sel + " FROM read_parquet('" + sql_path(file) + "')" + where +
-                         " ORDER BY \"frame_index\"",
-                     dt)) {
-            const auto* ts = dt.col("timestamp");
-            for (const auto& k : scalar_keys_) {
-                int d = sinfo_[k].dims;
-                std::vector<const ParquetDB::Column*> cc(d);
-                for (int c = 0; c < d; ++c) cc[c] = dt.col(k + "|" + std::to_string(c));
-                auto& hist = scalar_hist_[k];
-                hist.resize(dt.rows);
-                for (size_t r = 0; r < dt.rows; ++r) {
-                    hist[r].t_us = ts ? (uint64_t)(ts->num[r] * 1e6) : 0;
-                    hist[r].v.resize(d);
-                    for (int c = 0; c < d; ++c)
-                        hist[r].v[c] = cc[c] ? (float)cc[c]->num[r] : 0.0f;
-                }
-            }
-        }
-    }
-
-    // Image columns: reuse the existing sources across a switch (keeps their
-    // DuckDB connections + decoders), and (re)open all cameras in parallel.
     std::vector<std::string> img_keys, mp4_keys;
     for (const auto& k : video_keys_)
         (vsrc_kind_[k] == VSrc::Image ? img_keys : mp4_keys).push_back(k);
-
     for (const auto& k : img_keys) {
         vinfo_[k].frame_count = (uint64_t)n_frames;
         if (!img_.count(k)) img_[k] = std::make_unique<ImageColumnSource>();
@@ -289,9 +257,48 @@ bool LeRobotRecording::select_segment(int i) {
                  ? img_.erase(it)
                  : std::next(it);
 
+    // Scalar history reads the same data parquet as the image ts queries — run
+    // it as one more parallel task instead of blocking the images behind it.
+    const int ep = e.ep_index;
+    auto load_scalars = [&] {
+        scalar_hist_.clear();
+        if (scalar_keys_.empty() || !scalar_db_.ok()) return;
+        std::string sel = "timestamp";
+        for (const auto& k : scalar_keys_) {
+            int d = sinfo_[k].dims;
+            for (int c = 0; c < d; ++c)
+                sel += ", " + q(k) + "[" + std::to_string(c + 1) + "] AS " + q(k + "|" +
+                       std::to_string(c));
+        }
+        char where[96];
+        std::snprintf(where, sizeof(where), " WHERE \"episode_index\" = %d", ep);
+        ParquetDB::Table dt;
+        if (!scalar_db_.query("SELECT " + sel + " FROM read_parquet('" + sql_path(file) + "')" +
+                                  where + " ORDER BY \"frame_index\"",
+                              dt))
+            return;
+        const auto* ts = dt.col("timestamp");
+        for (const auto& k : scalar_keys_) {
+            int d = sinfo_[k].dims;
+            std::vector<const ParquetDB::Column*> cc(d);
+            for (int c = 0; c < d; ++c) cc[c] = dt.col(k + "|" + std::to_string(c));
+            auto& hist = scalar_hist_[k];
+            hist.resize(dt.rows);
+            for (size_t r = 0; r < dt.rows; ++r) {
+                hist[r].t_us = ts ? (uint64_t)(ts->num[r] * 1e6) : 0;
+                hist[r].v.resize(d);
+                for (int c = 0; c < d; ++c) hist[r].v[c] = cc[c] ? (float)cc[c]->num[r] : 0.0f;
+            }
+        }
+    };
+
+    if (bail()) return false;
+
+    // Image columns (reuse the existing sources: keeps their DuckDB connections
+    // + decoders) + the scalar read, all in parallel.
     {
         std::vector<std::thread> ts;
-        const int ep = e.ep_index;
+        ts.emplace_back(load_scalars);
         for (const auto& k : img_keys) {
             ImageColumnSource* s = img_[k].get();
             const int w = vinfo_[k].width, h = vinfo_[k].height;
@@ -366,9 +373,24 @@ bool LeRobotRecording::seek_video(uint64_t target_us, const std::function<bool()
                                   std::map<std::string, VideoFramePtr>& out) {
     if (cancelled()) return false;
 
-    // Per camera, a closure that produces the frame (mp4 or image column).
+    std::map<std::string, VideoFramePtr> got;
+
+    // Fresh segment, first frame: serve the image cameras from the first-frame
+    // cache when this episode was viewed recently (no parquet read at all).
+    const bool want_f0 = !primed_ && target_us < 100'000;
+    const std::string f0key = cur_file_ + "#" + std::to_string(cur_ep_);
+    if (want_f0)
+        for (const auto& e : f0_cache_)
+            if (e.key == f0key) {
+                got = e.frames;
+                break;
+            }
+
+    // Per camera, a closure that produces the frame (mp4 or image column) —
+    // skipped for any camera already served from the cache above.
     std::vector<std::pair<std::string, std::function<VideoFramePtr()>>> work;
     for (const auto& k : video_keys_) {
+        if (got.count(k) && got[k]) continue;
         if (auto it = mp4_.find(k); it != mp4_.end() && it->second) {
             Mp4Source* s = it->second.get();
             work.push_back({k, [=] { return s->frame_at(target_us, cancelled); }});
@@ -377,9 +399,8 @@ bool LeRobotRecording::seek_video(uint64_t target_us, const std::function<bool()
             work.push_back({k, [=] { return s->frame_at(target_us, cancelled); }});
         }
     }
-    if (work.empty()) return true;
+    if (work.empty() && got.empty()) return true;
 
-    std::map<std::string, VideoFramePtr> got;
     std::mutex mx;
     auto run = [&](const std::string& k, const std::function<VideoFramePtr()>& fn) {
         VideoFramePtr f = fn();
@@ -391,14 +412,44 @@ bool LeRobotRecording::seek_video(uint64_t target_us, const std::function<bool()
         std::vector<std::thread> ts;
         for (auto& [k, fn] : work) ts.emplace_back(run, k, fn);
         for (auto& t : ts) t.join();
-    } else {
+    } else if (work.size() == 1) {
         run(work[0].first, work[0].second);
     }
 
     if (cancelled()) return false;
-    // A null frame here means "not decoded yet" (loader still catching up after
-    // a switch), not "blank" — leave the panel showing whatever it had rather
-    // than flashing empty.
+
+    // Right after a switch, hold every panel on the loading bed until all
+    // channels have a frame, then reveal them together (no one-by-one pop-in).
+    // Once primed, a channel whose loader briefly falls behind just isn't
+    // updated — the others keep going.
+    if (!primed_) {
+        bool all = true;
+        for (const auto& k : video_keys_)
+            if (!got.count(k) || !got[k]) all = false;
+        if (!all) return true; // hold — not every channel is ready yet
+        primed_ = true;
+        if (switch_t0_.time_since_epoch().count()) {
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - switch_t0_)
+                          .count();
+            std::fprintf(stderr, "[sw] first frame set +%lldms\n", (long long)ms);
+        }
+        // Remember these first frames so the next revisit is instant.
+        if (want_f0) {
+            FirstFrames ff;
+            ff.key = f0key;
+            for (const auto& k : video_keys_)
+                if (img_.count(k)) ff.frames[k] = got[k];
+            f0_cache_.erase(std::remove_if(f0_cache_.begin(), f0_cache_.end(),
+                                           [&](const FirstFrames& e) { return e.key == f0key; }),
+                            f0_cache_.end());
+            f0_cache_.insert(f0_cache_.begin(), std::move(ff));
+            if (f0_cache_.size() > kF0CacheMax) f0_cache_.pop_back();
+        }
+    }
+
+    // A null frame here means "not decoded yet", not "blank" — leave the panel
+    // showing whatever it had rather than flashing empty.
     for (auto& [k, f] : got)
         if (f) out[k] = f;
     return true;

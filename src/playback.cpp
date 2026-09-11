@@ -55,14 +55,22 @@ bool Playback::open(const std::string& path) {
         thread_ = std::thread(&Playback::playback_loop, this);
         seek(start_us_.load()); // Foxglove-style paused preview of the first frame
         opening_.store(false);
+        switcher_ = std::thread(&Playback::switcher_loop, this);
     });
     return true;
 }
 
 void Playback::close() {
     ++switch_epoch_; // cancel any in-flight background open / switch
+    {
+        std::lock_guard<std::mutex> lk(switcher_mx_);
+        switcher_stop_ = true;
+    }
+    switcher_cv_.notify_all();
     if (open_thread_.joinable()) open_thread_.join();
-    if (switch_thread_.joinable()) switch_thread_.join();
+    if (switcher_.joinable()) switcher_.join();
+    switcher_stop_ = false;
+    switch_target_.store(-1);
     opening_.store(false);
     seg_switching_.store(false);
     stop_thread();
@@ -106,41 +114,72 @@ void Playback::set_speed(float x) { speed_.store(std::clamp(x, 0.25f, 8.0f)); }
 void Playback::select_segment(int i) {
     if (!rec_ || i < 0 || i >= (int)segs_.size() || i == cur_seg_.load()) return;
 
-    // Reflect the target immediately so the UI (list highlight, scrubber length,
-    // loading bed) updates on the click; the heavy parquet work runs on a
-    // background thread so the UI never blocks.
+    // Reflect the target immediately (list highlight, scrubber length, loading
+    // bed); the switcher thread does the heavy parquet work and coalesces
+    // rapid clicks so only the newest target is fully loaded.
     cur_seg_.store(i);
-    const int epoch = ++switch_epoch_;
     {
+        // Keep latest_frames_ — the panels hold the old episode's last frame
+        // until the new set is ready, then swap without a black gap.
         std::lock_guard<std::mutex> lk(frames_mutex_);
-        latest_frames_.clear();
         shown_count_.clear();
     }
     start_us_.store(0);
     end_us_.store(segs_[i].duration_us);
     current_time_us_.store(0);
     playing_.store(false);
-
-    if (switch_thread_.joinable()) switch_thread_.join();
     seg_switching_.store(true);
-    switch_thread_ = std::thread([this, i, epoch] {
-        stop_thread();
-        if (epoch != switch_epoch_.load()) return; // superseded during stop
-        bool ok;
+    switch_target_.store(i);
+    switcher_cv_.notify_one();
+}
+
+void Playback::switcher_loop() {
+    for (;;) {
+        int target;
         {
-            std::lock_guard<std::mutex> rl(rec_mx_);
-            if (epoch != switch_epoch_.load()) return;
-            ok = rec_ && rec_->select_segment(i);
-            if (ok) rebuild_from_rec();
+            std::unique_lock<std::mutex> lk(switcher_mx_);
+            switcher_cv_.wait(lk, [this] { return switcher_stop_ || switch_target_.load() >= 0; });
+            if (switcher_stop_) return;
+            target = switch_target_.exchange(-1);
         }
-        if (epoch != switch_epoch_.load()) return;
+        if (target < 0) continue;
+
+        auto superseded = [this] { return switch_target_.load() >= 0; };
+        bool ok = false;
+        for (;;) {
+            if (int newer = switch_target_.exchange(-1); newer >= 0) target = newer;
+            stop_thread();
+            if (switcher_stop_) return;
+            {
+                std::lock_guard<std::mutex> rl(rec_mx_);
+                ok = rec_ && rec_->select_segment(target, superseded);
+                if (ok) {
+                    rebuild_from_rec();
+                    // Drop any frame left over for a channel this segment no
+                    // longer has (LeRobot episodes normally share channels).
+                    std::lock_guard<std::mutex> fl(frames_mutex_);
+                    for (auto it = latest_frames_.begin(); it != latest_frames_.end();)
+                        it = std::find(video_topics_.begin(), video_topics_.end(), it->first) ==
+                                     video_topics_.end()
+                                 ? latest_frames_.erase(it)
+                                 : std::next(it);
+                }
+            }
+            if (switch_target_.load() >= 0) continue; // a newer target arrived — redo
+            break;
+        }
+        if (!ok) { // bailed with nothing newer pending (rare) — leave stopped
+            seg_switching_.store(false);
+            continue;
+        }
+
         current_time_us_.store(start_us_.load());
         seek_pending_.store(false);
         should_stop_.store(false);
         thread_ = std::thread(&Playback::playback_loop, this);
         seek(start_us_.load());
         seg_switching_.store(false);
-    });
+    }
 }
 
 void Playback::seek(uint64_t timestamp_us) {
@@ -208,22 +247,22 @@ void Playback::playback_loop() {
         if (!playing_.load()) {
             // Paused (e.g. just after an episode switch): the background loader
             // may still be producing the first frames. Keep re-dispatching the
-            // current time until every video channel has a frame, or a short
-            // grace period passes.
-            auto until = clock::now() + std::chrono::seconds(8);
-            size_t last_n = 0;
-            int stale = 0;
+            // current time until every video channel has a frame, or the loader
+            // has finished (any still-missing channel is genuinely blank).
+            const auto until = clock::now() + std::chrono::seconds(20); // hard backstop
             while (!playing_.load() && !should_stop_.load() && !seek_pending_.load() &&
                    clock::now() < until) {
-                size_t n;
                 {
+                    // shown_count_ (not latest_frames_, which still holds the
+                    // previous segment's frames) tells us this segment has
+                    // delivered every channel.
                     std::lock_guard<std::mutex> lk(frames_mutex_);
-                    n = latest_frames_.size();
+                    size_t have = 0;
+                    for (const auto& t : video_topics_)
+                        if (shown_count_.count(t)) ++have;
+                    if (have >= video_topics_.size()) break;
                 }
-                if (n >= video_topics_.size()) break;
-                if (n == last_n && ++stale > 30) break; // ~1.5s with no new frame: give up
-                if (n != last_n) stale = 0;
-                last_n = n;
+                if (rec_ && rec_->loaded_until_us() >= end_us_.load()) break; // loader done
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 advance_to(current_time_us_.load());
             }
