@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <map>
 #include <memory>
@@ -86,12 +87,6 @@ ImVec4 trace_color(int k, int dims) {
     return ImVec4(r, g, b, 1.0f);
 }
 
-void rotate_all() {
-    g_rotation = (g_rotation + 90) % 360;
-    for (auto& kv : g_view)
-        kv.second.rot = ((((kv.second.rot % 360) + 360) % 360) + 90) % 360;
-}
-
 // Layout metrics. The right panel width is user-draggable.
 constexpr float RAIL_W = 48.0f;
 constexpr float TRANSPORT_H = 44.0f;
@@ -100,6 +95,8 @@ constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = PANEL_W_MIN; // opens at the minimum width; drag to widen
 bool g_panel_hidden = false; // left dock panel (rail toggle); shown by default
+bool g_show_history = true; // History rail toggle: swaps the whole body for history_panel();
+                            // on by default — the app lands there, not in an empty player
 
 // Icon sizes (Blockbench: .material-icons 22px, .tool 36x30).
 constexpr float RAIL_ICON_PX = 24.0f;
@@ -239,7 +236,7 @@ void rail(ImVec2 pos, ImVec2 size) {
     rail_sep();
     if (rail_btn(ICON_PHOTO_LIBRARY, "Open MCAP\xe2\x80\xa6", false)) open_dialog();
     if (rail_btn(ICON_FOLDER_OPEN, "Open LeRobot\xe2\x80\xa6", false)) open_folder_dialog();
-    if (rail_btn(ICON_ROTATE, "Rotate video 90\xc2\xb0", false)) rotate_all();
+    if (rail_btn(ICON_HISTORY, "History", g_show_history)) g_show_history = !g_show_history;
     if (has_file() && rail_btn(ICON_VIEW_SIDEBAR,
                                g_panel_hidden ? "Show panel" : "Hide panel", !g_panel_hidden))
         g_panel_hidden = !g_panel_hidden;
@@ -1548,6 +1545,344 @@ void side_panel(ImVec2 pos, ImVec2 size) {
     ImGui::EndChild();
 }
 
+// Truncates `s` with a trailing "…" if it's wider than `max_w` at whatever
+// font/size is currently pushed; returned unchanged otherwise. Used instead
+// of a hard clip rect so a long name never just cuts off mid-word.
+std::string ellipsize(const std::string& s, float max_w) {
+    if (ImGui::CalcTextSize(s.c_str()).x <= max_w) return s;
+    const char* ell = "\xe2\x80\xa6"; // U+2026 HORIZONTAL ELLIPSIS
+    float ell_w = ImGui::CalcTextSize(ell).x;
+    std::string out = s;
+    while (!out.empty() && ImGui::CalcTextSize(out.c_str()).x + ell_w > max_w) out.pop_back();
+    return out + ell;
+}
+
+// ── History panel ────────────────────────────────────────────────────────
+// A full-body view (swapped in over the whole workspace, like the video
+// stage) listing recently opened recordings. Placeholder data for now — a
+// real "remember what you opened" log is a separate piece of work; this is
+// just the shell + Blockbench-styled layout for it to land in later.
+struct HistoryEntry {
+    std::string name; // the only field renaming touches
+    const char* dir;
+    const char* type; // "MCAP" / "LEROBOT"
+    const char* duration;
+    const char* size;
+    const char* modified;
+};
+// A vector, not a fixed array — Delete actually has to remove an entry.
+std::vector<HistoryEntry> g_history_entries = {
+    {"workshop_recording.mcap", "D:/data/2025-09-08/", "MCAP", "9:12", "1.2 GB", "2025-09-08 14:32"},
+    {"robot_pick_place_20250908.mcap", "D:/data/2025-09-08/", "MCAP", "3:03", "542 MB", "2025-09-08 12:17"},
+    {"driving_20250907", "D:/data/2025-09-07/", "MCAP", "15:22", "2.8 GB", "2025-09-07 18:56"},
+    {"demo_20250906", "D:/data/2025-09-06/", "LEROBOT", "8:33", "1.9 GB", "2025-09-06 16:23"},
+    {"city_drive_20250905.mcap", "D:/data/2025-09-05/", "MCAP", "12:07", "2.1 GB", "2025-09-05 11:08"},
+    {"walk_test_20250903.mcap", "D:/data/2025-09-03/", "MCAP", "7:56", "934 MB", "2025-09-03 10:31"},
+    {"lab_recording_20250902", "D:/data/2025-09-02/", "LEROBOT", "11:24", "1.7 GB", "2025-09-02 17:20"},
+    {"highway_20250901.mcap", "D:/data/2025-09-01/", "MCAP", "28:36", "4.5 GB", "2025-09-01 09:12"},
+    {"night_walk_20250831.mcap", "D:/data/2025-08-31/", "MCAP", "6:48", "812 MB", "2025-08-31 22:46"},
+};
+int g_history_sel = 0;
+int g_history_ctx_row = -1;      // row the (single, shared) context menu is targeting
+bool g_history_want_ctx_menu = false; // deferred: opens the shared popup outside the row loop
+bool g_history_want_rename = false; // deferred: opens the modal outside the popup that requested it
+std::string g_history_rename_str;
+int g_history_delete_row = -1; // deferred: erase after the row loop, not mid-iteration
+
+void history_panel(ImVec2 pos, ImVec2 size) {
+    const theme::Palette& p = theme::palette();
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::BeginChild("##history", size, ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, pos + size, u32(p.back));
+
+    const float PAD = 20.0f;
+    const ImVec2 ipos(std::floor(pos.x + PAD), std::floor(pos.y + PAD));
+    const ImVec2 isize(std::floor(size.x - 2.0f * PAD), std::floor(size.y - 2.0f * PAD));
+
+    // Title + subtitle — the title carries real weight (a page header, not
+    // just another panel label) so it actually reads as the focal point.
+    ImGui::PushFont(fonts::medium(), theme::size::HEADING * 1.4f);
+    dl->AddText(ipos, u32(p.text), "HISTORY");
+    ImGui::PopFont();
+    ImGui::PushFont(nullptr, theme::size::SMALL);
+    dl->AddText(ImVec2(ipos.x, ipos.y + 36.0f), u32(p.subtle_text),
+               "Recently opened MCAP and LeRobot recordings");
+    ImGui::PopFont();
+
+    // Detail sidebar (right) + list (left) — same PAD-wide gap the rest of
+    // the app uses between adjacent panels.
+    const float DETAIL_W = 260.0f;
+    const float HEAD_H = 64.0f;
+    const float list_w = std::max(320.0f, isize.x - DETAIL_W - PAD);
+    const ImVec2 list_pos(ipos.x, ipos.y + HEAD_H);
+    const ImVec2 list_size(list_w, isize.y - HEAD_H);
+    const ImVec2 detail_pos(ipos.x + list_w + PAD, ipos.y + HEAD_H);
+    const ImVec2 detail_size(isize.x - list_w - PAD, isize.y - HEAD_H);
+
+    // ── List (card, matches the Episode panel's own card look) ─────────
+    dl->AddRectFilled(list_pos, list_pos + list_size, u32(p.ui), theme::RADIUS);
+    dl->AddRect(list_pos, list_pos + list_size, u32(p.border), theme::RADIUS, 0, 1.0f);
+
+    ImGui::SetCursorScreenPos(ImVec2(list_pos.x + 10, list_pos.y + 10));
+    ImGui::BeginChild("##hlistbody", ImVec2(list_size.x - 20, list_size.y - 20),
+                      ImGuiChildFlags_None);
+    ImGui::BeginChild("##hrows", ImVec2(0, 0), ImGuiChildFlags_None);
+
+    const float THUMB_W = 96.0f, THUMB_H = 54.0f, ROW_H = THUMB_H + 26.0f;
+    const float TYPE_W = 64.0f, DUR_W = 52.0f, SIZE_W = 64.0f, MOD_W = 108.0f, OPEN_W = 28.0f;
+    for (int i = 0; i < (int)g_history_entries.size(); ++i) {
+        HistoryEntry& e = g_history_entries[i];
+
+        ImVec2 rp = ImGui::GetCursorScreenPos();
+        float rw = ImGui::GetContentRegionAvail().x;
+        ImGui::PushID(i);
+        ImGui::InvisibleButton("row", ImVec2(rw, ROW_H));
+        // Same reason as the right-click check below: without this flag the
+        // open context menu blocks hover on every other row too, so the
+        // highlight just stops updating while it's open.
+        bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+        bool clk = ImGui::IsItemClicked();
+        // hov already tolerates a blocked-by-popup state (see above); without
+        // that, right-clicking a row while the context menu is already open
+        // (from an earlier right-click) only closes it instead of retargeting
+        // + reopening in the same click.
+        if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            g_history_ctx_row = i;
+            g_history_want_ctx_menu = true;
+        }
+        if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (clk) g_history_sel = i;
+        ImGui::PopID();
+
+        const bool sel = i == g_history_sel;
+        if (sel)
+            dl->AddRectFilled(rp, rp + ImVec2(rw, ROW_H), u32(p.selected));
+        else if (hov)
+            dl->AddRectFilled(rp, rp + ImVec2(rw, ROW_H), u32(mix(p.ui, p.selected, 0.5f)));
+
+        // Thumbnail placeholder.
+        ImVec2 t0(rp.x + 10.0f, rp.y + (ROW_H - THUMB_H) * 0.5f);
+        ImVec2 t1(t0.x + THUMB_W, t0.y + THUMB_H);
+        ImGui::SetCursorScreenPos(t0);
+        bb::checkerboard(ImVec2(THUMB_W, THUMB_H)); // draws its own border + submits a Dummy item
+
+        // Right-packed columns (open button, modified, size, duration, type) —
+        // packed against a capped content width, not the row's full (possibly
+        // very wide) hover/click width, so they sit close to the name instead
+        // of stranded out at the window's right edge with a dead gap between.
+        const float CONTENT_W = std::min(rw, 720.0f);
+        float rx = rp.x + CONTENT_W - 10.0f;
+        auto col = [&](float w, const char* text, ImU32 col_) {
+            rx -= w;
+            ImGui::PushFont(nullptr, theme::size::SMALL);
+            ImVec2 ts = ImGui::CalcTextSize(text);
+            dl->AddText(snap(ImVec2(rx + (w - ts.x) * 0.5f, rp.y + (ROW_H - ts.y) * 0.5f)), col_,
+                       text);
+            ImGui::PopFont();
+        };
+        {
+            ImVec2 ob0(rx - OPEN_W, rp.y + (ROW_H - 22.0f) * 0.5f);
+            ImVec2 ob1(ob0.x + 22.0f, ob0.y + 22.0f);
+            bool obhov = ImGui::IsMouseHoveringRect(ob0, ob1);
+            icon_centered(dl, ICON_FOLDER_OPEN, ob0, ob1, 16.0f,
+                         u32(obhov ? p.light : p.subtle_text));
+            rx -= OPEN_W;
+        }
+        col(MOD_W, e.modified, u32(p.subtle_text));
+        col(SIZE_W, e.size, u32(p.subtle_text));
+        col(DUR_W, e.duration, u32(p.subtle_text));
+        {
+            // MCAP vs LeRobot need to read apart at a glance — filled-accent
+            // vs outline, not two more hues on top of the palette.
+            const bool is_mcap = std::strcmp(e.type, "MCAP") == 0;
+            rx -= TYPE_W;
+            ImGui::PushFont(nullptr, theme::size::CAPTION);
+            ImVec2 ts = ImGui::CalcTextSize(e.type);
+            ImVec2 c0(rx + (TYPE_W - ts.x - 14.0f) * 0.5f, rp.y + (ROW_H - 18.0f) * 0.5f);
+            ImVec2 c1(c0.x + ts.x + 14.0f, c0.y + 18.0f);
+            if (is_mcap) {
+                dl->AddRectFilled(c0, c1, u32(fade(p.accent, 0.16f)), 3.0f);
+            } else {
+                dl->AddRect(c0, c1, u32(fade(p.light, 0.35f)), 3.0f, 0, 1.0f);
+            }
+            dl->AddText(snap(ImVec2(c0.x + 7.0f, c0.y + (18.0f - ts.y) * 0.5f)),
+                       u32(is_mcap ? p.accent : p.subtle_text), e.type);
+            ImGui::PopFont();
+        }
+
+        // Name — the one thing in this row that actually matters — a full
+        // size step above everything else (path, columns); path goes smaller
+        // still and dimmer so the two don't compete. Centred as a block
+        // against the row (not the thumbnail specifically) for even top/
+        // bottom breathing room.
+        float nx = t1.x + 12.0f, name_w = rx - 12.0f - nx;
+        const float kPathSize = theme::size::CAPTION;
+        const float name_gap = 5.0f;
+        ImGui::PushFont(fonts::medium(), theme::size::HEADING);
+        float nlh = ImGui::GetTextLineHeight();
+        ImGui::PopFont();
+        ImGui::PushFont(nullptr, kPathSize);
+        float plh = ImGui::GetTextLineHeight();
+        ImGui::PopFont();
+        float ny = rp.y + (ROW_H - (nlh + name_gap + plh)) * 0.5f;
+
+        ImGui::PushFont(fonts::medium(), theme::size::HEADING);
+        std::string ename = ellipsize(e.name, name_w);
+        dl->AddText(fonts::medium(), theme::size::HEADING, ImVec2(nx, ny),
+                   u32(sel || hov ? p.light : p.text), ename.c_str());
+        ImGui::PopFont();
+        ImGui::PushFont(nullptr, kPathSize);
+        dl->AddText(ImVec2(nx, ny + nlh + name_gap), u32(fade(p.subtle_text, 0.75f)), e.dir);
+        ImGui::PopFont();
+
+        // The thumbnail's checkerboard() submitted its own (shorter) item —
+        // force the cursor back to a full-width row boundary so the next
+        // row's InvisibleButton starts in the right place.
+        ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + ROW_H));
+    }
+    ImGui::EndChild();
+    ImGui::EndChild();
+
+    // ── Right-click menu — a single shared popup instance for the whole
+    // list (not one per row): opened here, outside the row loop, so there's
+    // exactly one ImGui popup ID involved regardless of which row was
+    // clicked. Blockbench's plain dark slab, no border (matches the video
+    // panel's own "⋮" menu).
+    if (g_history_want_ctx_menu) {
+        ImGui::OpenPopup("history_row_ctx");
+        g_history_want_ctx_menu = false;
+    }
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, u32(p.ui));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
+    if (ImGui::BeginPopup("history_row_ctx")) {
+        if (g_history_ctx_row >= 0 && g_history_ctx_row < (int)g_history_entries.size()) {
+            ImGui::PushFont(nullptr, theme::size::BODY);
+            if (ImGui::Selectable("Open", false, 0, ImVec2(130.0f, 0))) {
+                g_history_sel = g_history_ctx_row; // same as the detail sidebar's own Open button
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::Selectable("Rename", false, 0, ImVec2(130.0f, 0))) {
+                g_history_rename_str = g_history_entries[g_history_ctx_row].name;
+                g_history_want_rename = true;
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::Selectable("Delete", false, 0, ImVec2(130.0f, 0))) {
+                g_history_delete_row = g_history_ctx_row; // erased below, after this popup
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopFont();
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
+
+    // Deferred delete — after the loop (and after the context menu above,
+    // which is what actually sets g_history_delete_row), never mid-iteration
+    // over the vector it's mutating.
+    if (g_history_delete_row >= 0 && g_history_delete_row < (int)g_history_entries.size()) {
+        g_history_entries.erase(g_history_entries.begin() + g_history_delete_row);
+        if (g_history_sel == g_history_delete_row)
+            g_history_sel = std::min(g_history_sel, (int)g_history_entries.size() - 1);
+        else if (g_history_sel > g_history_delete_row)
+            --g_history_sel;
+        g_history_delete_row = -1;
+    }
+
+    // ── Rename dialog — deferred open so it isn't nested inside the context
+    // menu popup that requested it (that popup closes the same frame). ────
+    if (g_history_want_rename) {
+        ImGui::OpenPopup("Rename Recording");
+        g_history_want_rename = false;
+    }
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, u32(p.ui));
+    ImGui::PushStyleColor(ImGuiCol_Border, u32(p.border));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, theme::RADIUS);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
+    ImGui::SetNextWindowSize(ImVec2(340.0f, 0));
+    if (ImGui::BeginPopupModal("Rename Recording", nullptr,
+                              ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        ImGui::GetWindowDrawList()->AddText(ImGui::GetCursorScreenPos(), u32(p.subtle_text),
+                                            "New name");
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0, 20.0f));
+        ImGui::SetNextItemWidth(-1);
+        bb::input_text("##rename_input", &g_history_rename_str);
+        ImGui::Dummy(ImVec2(0, 12.0f));
+        const float bw = 96.0f;
+        if (bb::primary_button("Rename", ImVec2(bw, 0))) {
+            if (g_history_ctx_row >= 0 && g_history_ctx_row < (int)g_history_entries.size() &&
+                !g_history_rename_str.empty())
+                g_history_entries[g_history_ctx_row].name = g_history_rename_str;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (bb::button("Cancel", ImVec2(bw, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
+
+    // ── Detail sidebar ───────────────────────────────────────────────
+    dl->AddRectFilled(detail_pos, detail_pos + detail_size, u32(p.ui), theme::RADIUS);
+    dl->AddRect(detail_pos, detail_pos + detail_size, u32(p.border), theme::RADIUS, 0, 1.0f);
+    if (g_history_sel >= 0 && g_history_sel < (int)g_history_entries.size()) {
+        HistoryEntry& e = g_history_entries[g_history_sel];
+        const float dp = 14.0f;
+        ImVec2 d0(detail_pos.x + dp, detail_pos.y + dp);
+        float dw = detail_size.x - 2.0f * dp;
+        float th = dw * 9.0f / 16.0f;
+        ImGui::SetCursorScreenPos(d0);
+        bb::checkerboard(ImVec2(dw, th));
+        dl->AddRect(d0, ImVec2(d0.x + dw, d0.y + th), u32(p.border), 3.0f, 0, 1.0f);
+
+        const float kPathSize2 = theme::size::CAPTION;
+        float ty = d0.y + th + 16.0f;
+        ImGui::PushFont(fonts::medium(), theme::size::HEADING);
+        std::string dname = ellipsize(e.name, dw);
+        dl->AddText(fonts::medium(), theme::size::HEADING, ImVec2(d0.x, ty), u32(p.text),
+                   dname.c_str());
+        ImGui::PopFont();
+        ty += 30.0f;
+        ImGui::PushFont(nullptr, kPathSize2);
+        dl->AddText(ImVec2(d0.x, ty), u32(fade(p.subtle_text, 0.75f)), e.dir);
+        ImGui::PopFont();
+        ty += 24.0f;
+        dl->AddLine(ImVec2(d0.x, ty), ImVec2(d0.x + dw, ty), u32(p.border), 1.0f);
+        ty += 14.0f;
+
+        auto field = [&](const char* label, const char* value) {
+            ImGui::PushFont(nullptr, theme::size::CAPTION);
+            dl->AddText(ImVec2(d0.x, ty), u32(p.subtle_text), label);
+            ImGui::PopFont();
+            ImGui::PushFont(nullptr, theme::size::SMALL);
+            dl->AddText(ImVec2(d0.x + 74.0f, ty), u32(p.text), value);
+            ImGui::PopFont();
+            ty += 24.0f;
+        };
+        field("Type", e.type);
+        field("Duration", e.duration);
+        field("Size", e.size);
+        field("Modified", e.modified);
+
+        ty += 10.0f;
+        ImGui::SetCursorScreenPos(ImVec2(d0.x, ty));
+        if (bb::primary_button("Open", ImVec2(dw, 0))) {
+            // Placeholder data has no real file behind it yet — wired up once
+            // history entries track something actually opened.
+        }
+    }
+
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::Dummy(size); // pin the child's content bounds to the full area
+    ImGui::EndChild();
+}
+
 } // namespace
 
 void init(WGPUDevice device, WGPUQueue queue) {
@@ -1647,6 +1982,7 @@ void open_path(const char* utf8_path) {
     g_featured.clear();
     g_ep_filter.clear();
     g_rotation = settings::get().default_rotation; // panels seed from this
+    g_show_history = false; // opening a recording always takes you to the player
     g_await_post_open = true;
     g_pb->open(utf8_path); // async — returns immediately, is_open() flips when loaded
 }
@@ -1715,14 +2051,20 @@ void layout(ImVec2 o, ImVec2 sz) {
         }
     }
 
+    ImVec2 rail_pos = o;
+    ImVec2 rail_sz(RAIL_W, sz.y);
+
+    if (g_show_history) {
+        history_panel(ImVec2(o.x + RAIL_W, o.y), ImVec2(sz.x - RAIL_W, sz.y));
+        rail(rail_pos, rail_sz);
+        return;
+    }
+
     float body_w = sz.x - RAIL_W;
     float panel_w = g_panel_hidden ? 0.0f
                                    : std::clamp(g_panel_w, PANEL_W_MIN,
                                                 std::max(PANEL_W_MIN, body_w - 200.0f));
     float region_h = sz.y - TRANSPORT_H;
-
-    ImVec2 rail_pos = o;
-    ImVec2 rail_sz(RAIL_W, sz.y);
 
     // Left dock panel spans the full height; the video stage + its transport
     // stack vertically in the column to its right.
