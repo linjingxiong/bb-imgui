@@ -1571,18 +1571,11 @@ struct HistoryEntry {
     const char* modified;
 };
 // A vector, not a fixed array — Delete actually has to remove an entry.
-std::vector<HistoryEntry> g_history_entries = {
-    {"workshop_recording.mcap", "D:/data/2025-09-08/", "MCAP", "9:12", "1.2 GB", "2025-09-08 14:32"},
-    {"robot_pick_place_20250908.mcap", "D:/data/2025-09-08/", "MCAP", "3:03", "542 MB", "2025-09-08 12:17"},
-    {"driving_20250907", "D:/data/2025-09-07/", "MCAP", "15:22", "2.8 GB", "2025-09-07 18:56"},
-    {"demo_20250906", "D:/data/2025-09-06/", "LEROBOT", "8:33", "1.9 GB", "2025-09-06 16:23"},
-    {"city_drive_20250905.mcap", "D:/data/2025-09-05/", "MCAP", "12:07", "2.1 GB", "2025-09-05 11:08"},
-    {"walk_test_20250903.mcap", "D:/data/2025-09-03/", "MCAP", "7:56", "934 MB", "2025-09-03 10:31"},
-    {"lab_recording_20250902", "D:/data/2025-09-02/", "LEROBOT", "11:24", "1.7 GB", "2025-09-02 17:20"},
-    {"highway_20250901.mcap", "D:/data/2025-09-01/", "MCAP", "28:36", "4.5 GB", "2025-09-01 09:12"},
-    {"night_walk_20250831.mcap", "D:/data/2025-08-31/", "MCAP", "6:48", "812 MB", "2025-08-31 22:46"},
-};
-int g_history_sel = 0;
+// Starts empty: no real "remember what you opened" log exists yet (see
+// above), so there's nothing genuine to prefill here — an empty-state
+// drop-zone hint covers the no-entries case instead of showing fake rows.
+std::vector<HistoryEntry> g_history_entries = {};
+int g_history_sel = -1;
 int g_history_ctx_row = -1;      // row the (single, shared) context menu is targeting
 bool g_history_want_ctx_menu = false; // deferred: opens the shared popup outside the row loop
 bool g_history_want_rename = false; // deferred: opens the modal outside the popup that requested it
@@ -1642,6 +1635,7 @@ void history_panel(ImVec2 pos, ImVec2 size) {
     const float THUMB_H = std::max(24.0f, ROW_H - 2.0f * THUMB_PAD);
     const float THUMB_W = std::floor(THUMB_H * 16.0f / 9.0f);
 
+    if (total_entries > 0) {
     // Zero padding on both nested children — the 10px margin is already
     // hand-placed via the SetCursorScreenPos below; ImGui's own default
     // WindowPadding (8,8) on *each* of these would otherwise eat into the
@@ -1866,6 +1860,67 @@ void history_panel(ImVec2 pos, ImVec2 size) {
 
         ImGui::PopFont();
     }
+    } else {
+        // Empty state — no real "remember what you opened" log exists yet
+        // (see the comment on g_history_entries above), so there's nothing
+        // to page through, and no detail sidebar either (it only appears
+        // once something's selected). Centre the drop-zone on the *whole*
+        // body area — list_w + gap + detail_w — not just the narrower list
+        // column that assumes a sidebar sitting next to it.
+        const ImVec2 body_pos = list_pos;
+        const ImVec2 body_size(isize.x, list_size.y);
+        const ImVec2 box_size(std::min(560.0f, body_size.x - 120.0f),
+                              std::min(320.0f, body_size.y - 120.0f));
+        const ImVec2 box_min(body_pos.x + (body_size.x - box_size.x) * 0.5f,
+                             body_pos.y + (body_size.y - box_size.y) * 0.5f);
+        const ImVec2 box_max = box_min + box_size;
+
+        // ImDrawList has no built-in dashed stroke — walk each edge in
+        // dash/gap steps by hand.
+        auto dashed_rect = [&](ImVec2 mn, ImVec2 mx, ImU32 col, float thickness) {
+            const float dash = 7.0f, gap = 5.0f, step = dash + gap;
+            for (float x = mn.x; x < mx.x; x += step)
+                dl->AddLine(ImVec2(x, mn.y), ImVec2(std::min(x + dash, mx.x), mn.y), col, thickness);
+            for (float x = mn.x; x < mx.x; x += step)
+                dl->AddLine(ImVec2(x, mx.y), ImVec2(std::min(x + dash, mx.x), mx.y), col, thickness);
+            for (float y = mn.y; y < mx.y; y += step)
+                dl->AddLine(ImVec2(mn.x, y), ImVec2(mn.x, std::min(y + dash, mx.y)), col, thickness);
+            for (float y = mn.y; y < mx.y; y += step)
+                dl->AddLine(ImVec2(mx.x, y), ImVec2(mx.x, std::min(y + dash, mx.y)), col, thickness);
+        };
+        dashed_rect(box_min, box_max, u32(fade(p.subtle_text, 0.5f)), 1.5f);
+
+        // Icon + two lines of text as one block, centred as a whole inside
+        // the (now bigger) box rather than pinned to a fixed offset from
+        // its top — keeps it balanced as box_size changes with the window.
+        const float icon_px = 44.0f, icon_gap = 26.0f, line_gap = 8.0f;
+        ImGui::PushFont(fonts::medium(), theme::size::HEADING);
+        const char* line1 = "Drag & drop to add a recording";
+        ImVec2 ts1 = ImGui::CalcTextSize(line1);
+        ImGui::PopFont();
+        ImGui::PushFont(nullptr, theme::size::BODY);
+        const char* line2 = "MCAP file or LeRobot dataset folder";
+        ImVec2 ts2 = ImGui::CalcTextSize(line2);
+        ImGui::PopFont();
+
+        float total_h = icon_px + icon_gap + ts1.y + line_gap + ts2.y;
+        float top = box_min.y + (box_size.y - total_h) * 0.5f;
+
+        ImVec2 ic0(box_min.x + (box_size.x - icon_px) * 0.5f, top);
+        ImVec2 ic1 = ic0 + ImVec2(icon_px, icon_px);
+        icon_centered(dl, ICON_CREATE_NEW_FOLDER, ic0, ic1, icon_px, u32(fade(p.subtle_text, 0.7f)));
+
+        float ty = ic1.y + icon_gap;
+        ImGui::PushFont(fonts::medium(), theme::size::HEADING);
+        dl->AddText(ImVec2(box_min.x + (box_size.x - ts1.x) * 0.5f, ty), u32(p.text), line1);
+        ImGui::PopFont();
+        ty += ts1.y + line_gap;
+
+        ImGui::PushFont(nullptr, theme::size::BODY);
+        dl->AddText(ImVec2(box_min.x + (box_size.x - ts2.x) * 0.5f, ty),
+                   u32(fade(p.subtle_text, 0.75f)), line2);
+        ImGui::PopFont();
+    }
 
     // ── Right-click menu — a single shared popup instance for the whole
     // list (not one per row): opened here, outside the row loop, so there's
@@ -1951,10 +2006,12 @@ void history_panel(ImVec2 pos, ImVec2 size) {
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(2);
 
-    // ── Detail sidebar ───────────────────────────────────────────────
-    dl->AddRectFilled(detail_pos, detail_pos + detail_size, u32(p.ui), theme::RADIUS);
-    dl->AddRect(detail_pos, detail_pos + detail_size, u32(p.border), theme::RADIUS, 0, 1.0f);
+    // ── Detail sidebar — no card at all when nothing's selected (e.g. the
+    // empty-state drop-zone above with no entries yet), rather than an
+    // empty box with nothing in it. ────────────────────────────────────
     if (g_history_sel >= 0 && g_history_sel < (int)g_history_entries.size()) {
+        dl->AddRectFilled(detail_pos, detail_pos + detail_size, u32(p.ui), theme::RADIUS);
+        dl->AddRect(detail_pos, detail_pos + detail_size, u32(p.border), theme::RADIUS, 0, 1.0f);
         HistoryEntry& e = g_history_entries[g_history_sel];
         const float dp = 14.0f;
         ImVec2 d0(detail_pos.x + dp, detail_pos.y + dp);
