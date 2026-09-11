@@ -1588,6 +1588,7 @@ bool g_history_want_ctx_menu = false; // deferred: opens the shared popup outsid
 bool g_history_want_rename = false; // deferred: opens the modal outside the popup that requested it
 std::string g_history_rename_str;
 int g_history_delete_row = -1; // deferred: erase after the row loop, not mid-iteration
+int g_history_page = 0;
 
 void history_panel(ImVec2 pos, ImVec2 size) {
     const theme::Palette& p = theme::palette();
@@ -1620,18 +1621,52 @@ void history_panel(ImVec2 pos, ImVec2 size) {
     const ImVec2 detail_pos(ipos.x + list_w + PAD, ipos.y + HEAD_H);
     const ImVec2 detail_size(isize.x - list_w - PAD, isize.y - HEAD_H);
 
-    // ── List (card, matches the Episode panel's own card look) ─────────
-    dl->AddRectFilled(list_pos, list_pos + list_size, u32(p.ui), theme::RADIUS);
-    dl->AddRect(list_pos, list_pos + list_size, u32(p.border), theme::RADIUS, 0, 1.0f);
+    // ── List — each row carries its own card background now, so the
+    // container itself stays bare (no fill, no border). A pager strip is
+    // reserved at the bottom (below the scrollable rows). ────────────────
+    const float PAGER_H = 40.0f;
+    const int PAGE_SIZE = 8;
+    const int total_entries = (int)g_history_entries.size();
+    const int total_pages = std::max(1, (total_entries + PAGE_SIZE - 1) / PAGE_SIZE);
+    g_history_page = std::clamp(g_history_page, 0, total_pages - 1);
+    const int page_start = g_history_page * PAGE_SIZE;
+    const int page_end = std::min(page_start + PAGE_SIZE, total_entries);
 
+    // Row height derived from the available space, not a fixed constant —
+    // exactly PAGE_SIZE rows fill the list area with no leftover to scroll,
+    // which is the point of paging instead of a long scrolling list.
+    const float ROW_GAP = 4.0f;
+    const float rows_avail_h = list_size.y - 20.0f - PAGER_H;
+    const float ROW_H = std::floor((rows_avail_h - (PAGE_SIZE - 1) * ROW_GAP) / PAGE_SIZE);
+    const float THUMB_PAD = 6.0f; // thumbnail fills the row height, minus a slim margin
+    const float THUMB_H = std::max(24.0f, ROW_H - 2.0f * THUMB_PAD);
+    const float THUMB_W = std::floor(THUMB_H * 16.0f / 9.0f);
+
+    // Zero padding on both nested children — the 10px margin is already
+    // hand-placed via the SetCursorScreenPos below; ImGui's own default
+    // WindowPadding (8,8) on *each* of these would otherwise eat into the
+    // row-height budget computed above without being accounted for there,
+    // pushing the last row past the bottom of a (non-scrolling) page.
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::SetCursorScreenPos(ImVec2(list_pos.x + 10, list_pos.y + 10));
-    ImGui::BeginChild("##hlistbody", ImVec2(list_size.x - 20, list_size.y - 20),
+    ImGui::BeginChild("##hlistbody", ImVec2(list_size.x - 20, list_size.y - 20 - PAGER_H),
                       ImGuiChildFlags_None);
-    ImGui::BeginChild("##hrows", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImGui::BeginChild("##hrows", ImVec2(0, 0), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    // Rows are placed with absolute SetCursorScreenPos calls, but ImGui still
+    // tacks its own default ItemSpacing.y onto the cursor after every item
+    // (including the trailing per-row gap Dummy below) — that's on top of
+    // ROW_GAP, not instead of it, so it was never in the ROW_H budget and
+    // silently pushed the last row of a page past the bottom clip edge.
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+    { // Shadows the outer `dl` (the "##history" window's own list) for
+      // everything in this block — rows must draw on *this* child's list so
+      // they clip to its scrollable bounds instead of bleeding upward into
+      // the header above when scrolled.
+    ImDrawList* dl = ImGui::GetWindowDrawList();
 
-    const float THUMB_W = 96.0f, THUMB_H = 54.0f, ROW_H = THUMB_H + 26.0f;
     const float TYPE_W = 64.0f, DUR_W = 52.0f, SIZE_W = 64.0f, MOD_W = 108.0f, OPEN_W = 28.0f;
-    for (int i = 0; i < (int)g_history_entries.size(); ++i) {
+    for (int i = page_start; i < page_end; ++i) {
         HistoryEntry& e = g_history_entries[i];
 
         ImVec2 rp = ImGui::GetCursorScreenPos();
@@ -1656,10 +1691,15 @@ void history_panel(ImVec2 pos, ImVec2 size) {
         ImGui::PopID();
 
         const bool sel = i == g_history_sel;
+        // Every row is its own card now — a constant base fill, then
+        // hover/selected brighten on top of that instead of only appearing
+        // against a bare background.
+        dl->AddRectFilled(rp, rp + ImVec2(rw, ROW_H), u32(p.ui), theme::RADIUS);
         if (sel)
-            dl->AddRectFilled(rp, rp + ImVec2(rw, ROW_H), u32(p.selected));
+            dl->AddRectFilled(rp, rp + ImVec2(rw, ROW_H), u32(p.selected), theme::RADIUS);
         else if (hov)
-            dl->AddRectFilled(rp, rp + ImVec2(rw, ROW_H), u32(mix(p.ui, p.selected, 0.5f)));
+            dl->AddRectFilled(rp, rp + ImVec2(rw, ROW_H), u32(mix(p.ui, p.selected, 0.5f)),
+                              theme::RADIUS);
 
         // Thumbnail placeholder.
         ImVec2 t0(rp.x + 10.0f, rp.y + (ROW_H - THUMB_H) * 0.5f);
@@ -1737,12 +1777,95 @@ void history_panel(ImVec2 pos, ImVec2 size) {
         ImGui::PopFont();
 
         // The thumbnail's checkerboard() submitted its own (shorter) item —
-        // force the cursor back to a full-width row boundary so the next
-        // row's InvisibleButton starts in the right place.
+        // force the cursor back to a full-width row boundary, then submit an
+        // actual item for the gap itself (not just SetCursorScreenPos) so
+        // Dear ImGui doesn't flag the jump as extending the window's bounds
+        // without a following item. No gap after the *last* row on the page —
+        // ROW_H was budgeted for PAGE_SIZE rows + (PAGE_SIZE-1) gaps between
+        // them, so a trailing one here would push the last row past the
+        // bottom of the (non-scrolling) list.
         ImGui::SetCursorScreenPos(ImVec2(rp.x, rp.y + ROW_H));
+        ImGui::Dummy(ImVec2(rw, i + 1 < page_end ? ROW_GAP : 0.0f));
     }
+    } // end dl shadow
+    ImGui::PopStyleVar(); // ItemSpacing
     ImGui::EndChild();
     ImGui::EndChild();
+    ImGui::PopStyleVar(); // WindowPadding
+
+    // ── Pagination bar — bottom strip of the list area, right-aligned
+    // buttons (prev, page numbers with an ellipsis gap once there are many,
+    // next), entry count on the left. Real pagination over whatever's
+    // actually in g_history_entries, not decorative. ─────────────────────
+    {
+        ImVec2 pg0(list_pos.x, list_pos.y + list_size.y - PAGER_H);
+        ImVec2 pg1(list_pos.x + list_size.x, list_pos.y + list_size.y);
+
+        char cnt[32];
+        std::snprintf(cnt, sizeof(cnt), "%d entries", total_entries);
+        ImGui::PushFont(nullptr, theme::size::SMALL);
+        float clh = ImGui::GetTextLineHeight();
+        dl->AddText(ImVec2(pg0.x, pg0.y + (PAGER_H - clh) * 0.5f), u32(p.subtle_text), cnt);
+
+        struct PageBtn { int page; bool ellipsis; };
+        std::vector<PageBtn> btns;
+        const int kMaxNumbered = 5;
+        if (total_pages <= kMaxNumbered + 2) {
+            for (int pg = 0; pg < total_pages; ++pg) btns.push_back({pg, false});
+        } else {
+            for (int pg = 0; pg < kMaxNumbered; ++pg) btns.push_back({pg, false});
+            btns.push_back({-1, true});
+            btns.push_back({total_pages - 1, false});
+        }
+
+        const float bh = 26.0f;
+        float bx = pg1.x - 4.0f;
+        auto pager_btn = [&](int idx, const char* label, bool active, bool enabled) -> bool {
+            ImVec2 ts = ImGui::CalcTextSize(label);
+            float w = std::max(bh, ts.x + 14.0f);
+            bx -= w;
+            ImVec2 b0(snap(ImVec2(bx, pg0.y + (PAGER_H - bh) * 0.5f))), b1(b0.x + w, b0.y + bh);
+            ImGui::PushID(idx);
+            ImGui::SetCursorScreenPos(b0);
+            ImGui::InvisibleButton("pgbtn", ImVec2(w, bh));
+            bool hov = enabled && ImGui::IsItemHovered();
+            bool clk = enabled && ImGui::IsItemClicked();
+            ImGui::PopID();
+            if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (active) dl->AddRectFilled(b0, b1, u32(p.accent), 4.0f);
+            else if (hov) dl->AddRectFilled(b0, b1, u32(fade(p.light, 0.12f)), 4.0f);
+            ImVec4 tc = active ? p.accent_text
+                              : (enabled ? (hov ? p.light : p.subtle_text) : fade(p.subtle_text, 0.4f));
+            dl->AddText(ImVec2(b0.x + (w - ts.x) * 0.5f, b0.y + (bh - ts.y) * 0.5f), u32(tc), label);
+            bx -= 4.0f;
+            return clk;
+        };
+
+        if (pager_btn(-2, "\xe2\x80\xba", false, g_history_page < total_pages - 1)) // ›
+            g_history_page = std::min(g_history_page + 1, total_pages - 1);
+
+        for (int bi = (int)btns.size() - 1; bi >= 0; --bi) {
+            const PageBtn& b = btns[bi];
+            if (b.ellipsis) {
+                const char* dots = "\xe2\x80\xa6"; // …
+                ImVec2 ts = ImGui::CalcTextSize(dots);
+                float w = ts.x + 14.0f;
+                bx -= w;
+                dl->AddText(ImVec2(bx + (w - ts.x) * 0.5f, pg0.y + (PAGER_H - ts.y) * 0.5f),
+                           u32(p.subtle_text), dots);
+                bx -= 4.0f;
+                continue;
+            }
+            char label[16];
+            std::snprintf(label, sizeof(label), "%d", b.page + 1);
+            if (pager_btn(b.page, label, b.page == g_history_page, true)) g_history_page = b.page;
+        }
+
+        if (pager_btn(-1, "\xe2\x80\xb9", false, g_history_page > 0)) // ‹
+            g_history_page = std::max(g_history_page - 1, 0);
+
+        ImGui::PopFont();
+    }
 
     // ── Right-click menu — a single shared popup instance for the whole
     // list (not one per row): opened here, outside the row loop, so there's
