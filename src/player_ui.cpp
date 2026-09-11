@@ -95,6 +95,7 @@ void rotate_all() {
 // Layout metrics. The right panel width is user-draggable.
 constexpr float RAIL_W = 48.0f;
 constexpr float TRANSPORT_H = 44.0f;
+constexpr float TOOLBAR_H = 32.0f; // top status strip over the video stage
 constexpr float PANEL_W_MIN = 260.0f;
 constexpr float PANEL_W_MAX = 640.0f;
 float g_panel_w = PANEL_W_MIN; // opens at the minimum width; drag to widen
@@ -239,15 +240,6 @@ void rail(ImVec2 pos, ImVec2 size) {
     if (rail_btn(ICON_PHOTO_LIBRARY, "Open MCAP\xe2\x80\xa6", false)) open_dialog();
     if (rail_btn(ICON_FOLDER_OPEN, "Open LeRobot\xe2\x80\xa6", false)) open_folder_dialog();
     if (rail_btn(ICON_ROTATE, "Rotate video 90\xc2\xb0", false)) rotate_all();
-    // The spotlight layout only makes sense with a crowd of cameras.
-    if (has_file() && g_pb->video_topics().size() > 4) {
-        int& lay = settings::get().layout;
-        if (rail_btn(lay == 1 ? ICON_VIEW_SIDEBAR : ICON_GRID_VIEW,
-                     lay == 1 ? "Layout: spotlight" : "Layout: grid", false)) {
-            lay = lay == 1 ? 0 : 1;
-            settings::save();
-        }
-    }
     if (has_file() && rail_btn(ICON_VIEW_SIDEBAR,
                                g_panel_hidden ? "Show panel" : "Hide panel", !g_panel_hidden))
         g_panel_hidden = !g_panel_hidden;
@@ -557,9 +549,14 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
     bool focused = (g_focus_topic == topic);
 
     // Title — uppercase, muted (Blockbench panel_handle > label, 1.1em).
+    // Clipped so a long topic name never runs under the header buttons (there
+    // are 2, 24px each, drawn from the right edge — see below); narrow panels
+    // (e.g. the spotlight strip's thumbnails) rely on this to stay tidy.
     ImGui::PushFont(fonts::medium(), theme::size::SMALL);
+    dl->PushClipRect(pos, ImVec2(pos.x + std::max(0.0f, size.x - 56.0f), pos.y + HEAD), true);
     dl->AddText(snap(ImVec2(pos.x + 10, pos.y + (HEAD - ImGui::GetTextLineHeight()) * 0.5f + 1.0f)),
                 u32(p.subtle_text), upper(topic).c_str());
+    dl->PopClipRect();
     ImGui::PopFont();
 
     // Controls — always shown; Blockbench .panel_control brightens on hover
@@ -674,7 +671,7 @@ void video_panel(const std::string& topic, ImVec2 pos, ImVec2 size) {
         if (frame) {
             mp::VideoFramePtr f = frame;
             px::PixelInspector((topic + "##pxi").c_str(), ip, ImVec2(ip.x + dw, ip.y + dh),
-                               f->width, f->height, v.rot, topic.c_str(),
+                               f->width, f->height, v.rot,
                                [f](int x, int y, unsigned char* rgb) {
                                    return mp::sample_rgb(*f, x, y, rgb);
                                });
@@ -830,6 +827,67 @@ ImVec2 fit_panel(float cw, float ch, float ar, float head) {
     return ImVec2(std::floor(pw), std::floor(ph));
 }
 
+// ── Preview top toolbar ──────────────────────────────────────────────────
+// A thin strip pinned to the top of the video stage, mirroring the bottom
+// transport bar's look (same fill, a hairline separating it from the video
+// grid below). Otherwise empty — a scaffold to hang per-state info on later.
+void preview_toolbar(ImVec2 pos, ImVec2 size) {
+    const theme::Palette& p = theme::palette();
+    pos = snap(pos);
+    size = ImVec2(std::floor(size.x), std::floor(size.y));
+
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::BeginChild("##toolbar", size, ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, pos + size, u32(p.ui));
+    dl->AddLine(ImVec2(pos.x, pos.y + size.y), ImVec2(pos.x + size.x, pos.y + size.y),
+               u32(p.border), 1.0f);
+
+    // ── Right: layout indicator / toggle. Always shows the current layout's
+    // icon; only turns into a real multi-option switch once there's a crowd
+    // of cameras (spotlight is meaningless otherwise, so it isn't offered).
+    if (has_file()) {
+        const bool multi = g_pb->video_topics().size() > 3;
+        const float box = 26.0f, cy = std::floor(pos.y + size.y * 0.5f);
+        float bx = pos.x + size.x - 10.0f - box;
+        int& lay = settings::get().layout;
+        auto lay_btn = [&](const char* icon, const char* tip, bool active, bool clickable) {
+            ImVec2 bs(box, box), bp = snap(ImVec2(bx, cy - box * 0.5f));
+            bool hov = false, clk = false;
+            if (clickable) {
+                ImGui::PushID(icon);
+                ImGui::SetCursorScreenPos(bp);
+                ImGui::InvisibleButton("b", bs);
+                hov = ImGui::IsItemHovered();
+                clk = ImGui::IsItemClicked();
+                ImGui::PopID();
+                if (hov) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); tooltip(tip); }
+            }
+            if (active) dl->AddRectFilled(bp, bp + bs, u32(p.selected), 4.0f);
+            icon_centered(dl, icon, bp, bp + bs, 16.0f,
+                         u32(active ? p.light : (hov ? p.light : p.subtle_text)));
+            bx -= box + 4.0f;
+            return clk;
+        };
+        if (multi) {
+            if (lay_btn(ICON_VIEW_SIDEBAR, "Layout: spotlight", lay == 1, true)) {
+                lay = 1;
+                settings::save();
+            }
+            if (lay_btn(ICON_GRID_VIEW, "Layout: grid", lay == 0, true)) {
+                lay = 0;
+                settings::save();
+            }
+        } else {
+            // Nothing to switch to — just show the (always-grid) icon.
+            lay_btn(ICON_GRID_VIEW, "Layout: grid", true, false);
+        }
+    }
+
+    ImGui::EndChild();
+}
+
 // ── Centre video stage ─────────────────────────────────────────────────
 void display(ImVec2 pos, ImVec2 size) {
     const theme::Palette& p = theme::palette();
@@ -912,26 +970,56 @@ void display(ImVec2 pos, ImVec2 size) {
         return;
     }
 
-    if (settings::get().layout == 1 && n > 4) {
+    if (settings::get().layout == 1 && n > 3) {
         // ── Spotlight: one feature video + a scrolling strip of the rest ──
         if (g_featured.empty() ||
             std::find(vts.begin(), vts.end(), g_featured) == vts.end())
             g_featured = vts[0];
 
-        const float STRIP_W = 200.0f;
-        float feat_w = std::floor(isize.x - STRIP_W - GAP);
+        // Fit the featured card against a reserved-width budget (its own
+        // aspect ratio decides the rest — it's usually height-bound, so it
+        // ends up narrower than the budget, with letterbox slack left over).
+        // Left-anchored (not centred) so that slack all lands on its right —
+        // between it and the strip — rather than splitting to its left too;
+        // that keeps the card flush against the left panel at a constant PAD,
+        // matching the stage's own edge margin. The strip then starts a fixed
+        // PAD after the card's *actual* right edge (same margin as the other
+        // two sides, not the smaller inter-panel GAP), and takes whatever
+        // width is left over (floored at a minimum so a wide-aspect card that
+        // eats the whole budget doesn't crowd it out) — so all three gaps
+        // (left panel↔card, card↔strip, strip↔window edge) read as one PAD.
+        const float MIN_STRIP_W = 180.0f;
+        float feat_w = std::floor(isize.x - MIN_STRIP_W - PAD);
         ImVec2 fs = fit_panel(feat_w, isize.y, video_ar(g_featured), HEAD);
-        ImVec2 fp(ipos.x + (feat_w - fs.x) * 0.5f, ipos.y + (isize.y - fs.y) * 0.5f);
+        ImVec2 fp(ipos.x, ipos.y + (isize.y - fs.y) * 0.5f);
         video_panel(g_featured, snap(fp), fs);
 
-        ImVec2 sp(std::floor(ipos.x + feat_w + GAP), ipos.y);
+        // Transparent — shares the checkerboard stage bg painted above rather
+        // than a flat slab that reads as a mismatched patch when the strip's
+        // thumbnails don't fill the full column height. Aligned to the
+        // featured panel's actual top/bottom edge (fp/fs), not the stage's.
+        ImVec2 sp(std::floor(fp.x + fs.x + PAD), fp.y);
+        const float STRIP_W = std::max(MIN_STRIP_W, ipos.x + isize.x - sp.x);
         ImGui::SetCursorScreenPos(sp);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, u32(p.deep));
-        ImGui::BeginChild("##strip", ImVec2(STRIP_W, isize.y), ImGuiChildFlags_None);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, 0);
+        ImGui::BeginChild("##strip", ImVec2(STRIP_W, fs.y), ImGuiChildFlags_None,
+                          ImGuiWindowFlags_NoScrollbar);
         float tw = ImGui::GetContentRegionAvail().x;
         float thumb_h = std::floor(tw * 0.66f + 27.0f);
-        for (const auto& t : vts) {
-            if (t == g_featured) continue;
+
+        std::vector<std::string> thumbs;
+        for (const auto& t : vts)
+            if (t != g_featured) thumbs.push_back(t);
+        const int m = (int)thumbs.size();
+        // When the thumbnails don't fill the strip, spread the leftover height
+        // evenly between them (first flush to the top, last flush to the
+        // bottom) instead of leaving them clumped at the top with a dead gap
+        // below. Too many to fit: fall back to a fixed gap and let it scroll
+        // (wheel-only — no scrollbar; edge triangles below hint at the rest).
+        const bool fits = m > 1 && (m * thumb_h + (m - 1) * GAP) <= fs.y;
+        const float gap = fits ? (fs.y - m * thumb_h) / (m - 1) : GAP;
+        for (int i = 0; i < m; ++i) {
+            const std::string& t = thumbs[i];
             ImVec2 tp = ImGui::GetCursorScreenPos();
             ImGui::PushID(t.c_str());
             ImGui::InvisibleButton("promote", ImVec2(tw, thumb_h));
@@ -944,10 +1032,31 @@ void display(ImVec2 pos, ImVec2 size) {
             ImGui::PopID();
             video_panel(t, tp, ImVec2(tw, thumb_h));
             ImGui::SetCursorScreenPos(ImVec2(tp.x, tp.y + thumb_h));
-            ImGui::Dummy(ImVec2(tw, GAP)); // spacing + keeps the scroll extent right
+            // Trailing gap after the last card only while scrolling (keeps the
+            // scroll extent right) — when everything fits, the last card sits
+            // flush at the bottom instead.
+            if (i + 1 < m || !fits) ImGui::Dummy(ImVec2(tw, gap));
         }
+        const float scroll_y = ImGui::GetScrollY(), scroll_max = ImGui::GetScrollMaxY();
         ImGui::EndChild();
         ImGui::PopStyleColor();
+
+        // Edge triangles instead of a scrollbar: hint there's more content
+        // above/below the current scroll position.
+        if (!fits) {
+            const ImU32 tri_col = u32(p.subtle_text);
+            const float tw2 = 8.0f, th2 = 5.0f, tcx = sp.x + STRIP_W * 0.5f;
+            if (scroll_y > 1.0f) {
+                float ty = sp.y + 4.0f;
+                dl->AddTriangleFilled(ImVec2(tcx - tw2 * 0.5f, ty + th2), ImVec2(tcx + tw2 * 0.5f, ty + th2),
+                                      ImVec2(tcx, ty), tri_col);
+            }
+            if (scroll_y < scroll_max - 1.0f) {
+                float ty = sp.y + fs.y - 4.0f;
+                dl->AddTriangleFilled(ImVec2(tcx - tw2 * 0.5f, ty - th2), ImVec2(tcx + tw2 * 0.5f, ty - th2),
+                                      ImVec2(tcx, ty), tri_col);
+            }
+        }
         ImGui::EndChild();
         return;
     }
@@ -1611,12 +1720,15 @@ void layout(ImVec2 o, ImVec2 sz) {
     ImVec2 panel_sz(panel_w, sz.y);
 
     float stage_w = std::max(120.0f, body_w - panel_w);
-    ImVec2 disp_pos(o.x + RAIL_W + panel_w, o.y);
-    ImVec2 disp_sz(stage_w, region_h);
+    ImVec2 toolbar_pos(o.x + RAIL_W + panel_w, o.y);
+    ImVec2 toolbar_sz(stage_w, TOOLBAR_H);
+    ImVec2 disp_pos(o.x + RAIL_W + panel_w, o.y + TOOLBAR_H);
+    ImVec2 disp_sz(stage_w, region_h - TOOLBAR_H);
 
     ImVec2 transport_pos(o.x + RAIL_W + panel_w, o.y + region_h);
     ImVec2 transport_sz(stage_w, TRANSPORT_H);
 
+    preview_toolbar(toolbar_pos, toolbar_sz);
     display(disp_pos, disp_sz);
     if (panel_w > 0.0f) side_panel(panel_pos, panel_sz);
     transport(transport_pos, transport_sz);

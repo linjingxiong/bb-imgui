@@ -1,22 +1,16 @@
 #include "pixel_inspector.h"
 
+#include "theme.h"
+
 #include <algorithm>
 #include <cstdio>
 
 namespace px {
 namespace {
 
-// Card anchor, remembered from the press so it doesn't jitter while dragging.
-// Only one InvisibleButton can be active at a time, so a single static is fine.
-ImVec2 g_anchor;
-
 int rot_norm(int rot) { return ((rot % 360) + 360) % 360; }
 
-ImU32 style_col(ImGuiCol c, float a = 1.0f) {
-    ImVec4 v = ImGui::GetStyleColorVec4(c);
-    v.w *= a;
-    return ImGui::ColorConvertFloat4ToU32(v);
-}
+ImU32 u32(const ImVec4& c) { return ImGui::ColorConvertFloat4ToU32(c); }
 
 void draw_loupe(ImDrawList* dl, ImVec2 hot) {
     const ImVec2 c(hot.x + 7.0f, hot.y + 7.0f); // lens sits down-right of the hotspot
@@ -32,8 +26,7 @@ void draw_loupe(ImDrawList* dl, ImVec2 hot) {
 } // namespace
 
 void PixelInspector(const char* str_id, ImVec2 img_min, ImVec2 img_max, int src_w, int src_h,
-                    int rot, const char* label,
-                    const std::function<bool(int, int, unsigned char*)>& sample) {
+                    int rot, const std::function<bool(int, int, unsigned char*)>& sample) {
     if (src_w <= 0 || src_h <= 0 || !sample) return;
     const ImVec2 sz(img_max.x - img_min.x, img_max.y - img_min.y);
     if (sz.x < 8.0f || sz.y < 8.0f) return;
@@ -46,7 +39,6 @@ void PixelInspector(const char* str_id, ImVec2 img_min, ImVec2 img_max, int src_
     // Hold-to-inspect: active from press to release, and only one at a time
     // (ImGui allows a single active item).
     const bool active = ImGui::IsItemActive();
-    if (ImGui::IsItemActivated()) g_anchor = ImGui::GetIO().MousePos;
     if (!active) {
         ImGui::SetCursorScreenPos(save_cursor);
         return;
@@ -100,32 +92,33 @@ void PixelInspector(const char* str_id, ImVec2 img_min, ImVec2 img_max, int src_
     draw_loupe(fg, mp);
 
     // ── The card ─────────────────────────────────────────────────────────
+    // No header — just the grid + readout, kept compact.
     const int N = 7;                      // grid radius -> 15x15
     const float CELL = 9.0f;
     const float GRID = (2 * N + 1) * CELL;
-    const float PAD = 12.0f, GAP = 14.0f, HEAD = 26.0f, TXT_W = 168.0f;
-    const ImVec2 csz(PAD + GRID + GAP + TXT_W + PAD, HEAD + PAD + GRID + PAD);
+    const float PAD = 12.0f, GAP = 14.0f, TXT_W = 168.0f;
+    const ImVec2 csz(PAD + GRID + GAP + TXT_W + PAD, PAD + GRID + PAD);
 
-    ImVec2 cpos(g_anchor.x + 18.0f, g_anchor.y + 14.0f);
+    // Follows the pointer (offset down-right so it doesn't sit under it).
+    ImVec2 cpos(mp.x + 18.0f, mp.y + 14.0f);
     const ImVec2 vp_min = ImGui::GetMainViewport()->WorkPos;
     const ImVec2 vp_sz = ImGui::GetMainViewport()->WorkSize;
     cpos.x = std::clamp(cpos.x, vp_min.x + 4.0f, vp_min.x + vp_sz.x - csz.x - 4.0f);
     cpos.y = std::clamp(cpos.y, vp_min.y + 4.0f, vp_min.y + vp_sz.y - csz.y - 4.0f);
 
-    const ImU32 bg = style_col(ImGuiCol_PopupBg);
-    const ImU32 bord = style_col(ImGuiCol_Border, 0.9f);
-    const ImU32 txt = style_col(ImGuiCol_Text);
-    const ImU32 dim = style_col(ImGuiCol_TextDisabled);
+    // Blockbench panel-dialog look: the plain dark UI slab (not the bright
+    // dropdown-menu popup colour), same as the video panel's own "⋮" menu.
+    const theme::Palette& p = theme::palette();
+    const ImU32 bg = u32(p.ui);
+    const ImU32 bord = u32(p.border);
+    const ImU32 txt = u32(p.text);
+    const ImU32 dim = u32(p.subtle_text);
 
     fg->AddRectFilled(cpos, ImVec2(cpos.x + csz.x, cpos.y + csz.y), bg, 6.0f);
     fg->AddRect(cpos, ImVec2(cpos.x + csz.x, cpos.y + csz.y), bord, 6.0f, 0, 1.0f);
 
-    if (label && label[0])
-        fg->AddText(ImVec2(cpos.x + PAD, cpos.y + (HEAD - ImGui::GetFontSize()) * 0.5f), txt, label);
-    fg->AddLine(ImVec2(cpos.x, cpos.y + HEAD), ImVec2(cpos.x + csz.x, cpos.y + HEAD), bord, 1.0f);
-
     // Zoom grid
-    const ImVec2 g0(cpos.x + PAD, cpos.y + HEAD + PAD);
+    const ImVec2 g0(cpos.x + PAD, cpos.y + PAD);
     unsigned char centre[3] = {0, 0, 0};
     const bool centre_ok = sample(px, py, centre);
     for (int dy = -N; dy <= N; ++dy)
@@ -144,18 +137,22 @@ void PixelInspector(const char* str_id, ImVec2 img_min, ImVec2 img_max, int src_
                 IM_COL32(0, 0, 0, 180), 0.0f, 0, 1.0f);
     fg->AddRect(ca, ImVec2(ca.x + CELL, ca.y + CELL), IM_COL32(255, 255, 255, 240), 0.0f, 0, 1.0f);
 
-    // Text column
+    // Text column — dim label, bright value (the "label: value" readout
+    // convention used elsewhere in the app), not one flat colour.
     const float tx = g0.x + GRID + GAP;
     float ty = g0.y + 2.0f;
     const float lh = ImGui::GetTextLineHeightWithSpacing();
     char buf[64];
-    std::snprintf(buf, sizeof(buf), "Position:  %d, %d", px, py);
-    fg->AddText(ImVec2(tx, ty), txt, buf);
-    ty += lh;
-    if (centre_ok) {
-        std::snprintf(buf, sizeof(buf), "RGB:  %d, %d, %d", centre[0], centre[1], centre[2]);
-        fg->AddText(ImVec2(tx, ty), txt, buf);
+    auto row = [&](const char* label, const char* value) {
+        fg->AddText(ImVec2(tx, ty), dim, label);
+        fg->AddText(ImVec2(tx + ImGui::CalcTextSize(label).x, ty), txt, value);
         ty += lh;
+    };
+    std::snprintf(buf, sizeof(buf), "%d, %d", px, py);
+    row("Position:  ", buf);
+    if (centre_ok) {
+        std::snprintf(buf, sizeof(buf), "%d, %d, %d", centre[0], centre[1], centre[2]);
+        row("RGB:  ", buf);
         std::snprintf(buf, sizeof(buf), "#%02X%02X%02X", centre[0], centre[1], centre[2]);
         fg->AddText(ImVec2(tx, ty), dim, buf);
         ty += lh + 6.0f;
