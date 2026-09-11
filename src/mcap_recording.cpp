@@ -252,45 +252,61 @@ bool McapRecording::seek_video(uint64_t target_us, const std::function<bool()>& 
     if (cancelled()) return false;
 
     // Plan each camera independently (carried over from do_seek_catchup):
-    //  - no keyframe at or before the target → target is inside this camera's
-    //    undecodable opening GOP; blank it (out[ch] == nullptr);
+    //  - target is before this camera's very first keyframe (its stream
+    //    starts later than the recording's nominal start — different topics
+    //    routinely have their first message a few ms to tens of ms apart, so
+    //    the file-wide start_us the initial paused preview seeks to almost
+    //    never lands exactly on every camera's first frame) → show that
+    //    first keyframe instead of leaving the panel blank; there being
+    //    nothing *yet* isn't the same as this camera being genuinely gapped
+    //    mid-recording, which is the case the old "blank" behaviour actually
+    //    targets;
     //  - decoder already sits past the target's keyframe and before the target
     //    → decode forward from there (the drag-right / normal-playback case);
     //  - otherwise flush and replay from the keyframe at or before the target.
     // The flush is deferred to the decode phase so a superseded seek touches
     // nothing.
-    struct Plan { uint64_t start_us; bool flush; };
+    // end_us caps how far into the future a channel's packets are accepted —
+    // normally target_us + 1 (nothing past the seek target matters), except
+    // the "camera starts later than target_us" case above, which needs
+    // exactly one message beyond it (that first keyframe) and no more.
+    struct Plan { uint64_t start_us, end_us; bool flush; };
     std::map<std::string, Plan> plan;
-    uint64_t read_start = target_us;
+    uint64_t read_start = target_us, read_end = target_us + 1;
     for (auto& [topic, dec] : decoders_) {
         auto kit = keyframes_.find(topic);
-        bool have_kf = kit != keyframes_.end() && !kit->second.empty() &&
-                       kit->second.front() <= target_us;
-        if (!have_kf) {
+        if (kit == keyframes_.end() || kit->second.empty()) {
             dec->flush();
             decoder_pos_us_[topic] = 0;
-            out[topic] = nullptr; // blank
+            out[topic] = nullptr; // no keyframe at all — genuinely nothing to show
             continue;
         }
-        uint64_t kf = *(std::upper_bound(kit->second.begin(), kit->second.end(), target_us) - 1);
+        const bool starts_later = kit->second.front() > target_us;
+        uint64_t kf = starts_later
+                          ? kit->second.front()
+                          : *(std::upper_bound(kit->second.begin(), kit->second.end(), target_us) -
+                              1);
         uint64_t cur = decoder_pos_us_[topic];
         Plan tr;
         if (cur > 0 && cur >= kf && cur < target_us)
-            tr = {cur + 1, false};
+            tr = {cur + 1, target_us + 1, false};
         else
-            tr = {kf, true};
+            tr = {kf, starts_later ? kf + 1 : target_us + 1, true};
         plan[topic] = tr;
         read_start = std::min(read_start, tr.start_us);
+        read_end = std::max(read_end, tr.end_us);
     }
 
     // Read the window once; bucket each planned channel's packets in log order.
     // Mutates no decoder state, so an abort here is a clean no-op.
     std::map<std::string, std::vector<DecodedCompressedVideo>> packets;
-    reader_.read_messages(read_start, target_us + 1, [&](const McapMessage& m) -> bool {
+    reader_.read_messages(read_start, read_end, [&](const McapMessage& m) -> bool {
         if (cancelled()) return false;
         if (!decoders_.count(m.topic)) return true;
         auto it = plan.find(m.topic);
-        if (it == plan.end() || m.timestamp_us < it->second.start_us) return true;
+        if (it == plan.end() || m.timestamp_us < it->second.start_us ||
+            m.timestamp_us >= it->second.end_us)
+            return true;
         DecodedCompressedVideo v;
         bool ok = still_topics_.count(m.topic) ? decode_compressed_image(m.data, v)
                                                 : decode_compressed_video(m.data, v);
