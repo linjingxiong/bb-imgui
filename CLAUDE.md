@@ -34,7 +34,7 @@
 
 - 用户说"提交" → 只做本地 `git commit`。
 - 只有用户明确说"推送"才 `git push`。
-- commit 身份：`-c user.email=zsmelfry@gmail.com -c user.name=linjx`。
+- commit 身份：`-c user.email=Linjx520074913@gmail.com -c user.name=linjx`。
 
 ## "启动" = 运行 exe
 
